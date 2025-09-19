@@ -12,6 +12,7 @@ import io
 import json
 import re
 import argparse
+import time
 from typing import List, Tuple, Dict, Any
 from PIL import Image, ImageDraw, ImageFont
 import torch
@@ -206,9 +207,17 @@ def draw_bbox_on_tile(tile_img: Image.Image, bbox: List[int], label: str, save_p
         x0, y0 = bbox[0], max(0, bbox[1] - 18)
         text = label
         if font:
-            tw, th = draw.textsize(text, font=font)
+            try:
+                bbox = draw.textbbox((0, 0), text, font=font)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            except AttributeError:
+                tw, th = draw.textsize(text, font=font)
         else:
-            tw, th = draw.textsize(text)
+            try:
+                bbox = draw.textbbox((0, 0), text)
+                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+            except AttributeError:
+                tw, th = draw.textsize(text)
         draw.rectangle([x0, y0, x0 + tw + 6, y0 + th + 4], fill=(255, 0, 0))
         draw.text((x0 + 3, y0 + 2), text, fill=(255, 255, 255), font=font)
     img.save(save_path)
@@ -233,13 +242,71 @@ def draw_rois_on_full_map(full_map: Image.Image, candidates: List[Dict[str, Any]
             label = f"#{i+1} conf={conf:.2f}"
             x0, y0 = b[0], max(0, b[1] - 18)
             if font:
-                tw, th = draw.textsize(label, font=font)
+                try:
+                    bbox = draw.textbbox((0, 0), label, font=font)
+                    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                except AttributeError:
+                    tw, th = draw.textsize(label, font=font)
             else:
-                tw, th = draw.textsize(label)
+                try:
+                    bbox = draw.textbbox((0, 0), label)
+                    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+                except AttributeError:
+                    tw, th = draw.textsize(label)
             draw.rectangle([x0, y0, x0 + tw + 6, y0 + th + 4], fill=color)
             draw.text((x0 + 3, y0 + 2), label, fill=(255, 255, 255), font=font)
     if save_path is None:
         save_path = os.path.join(OUTPUT_DIR, "full_map_with_rois.png")
+    img.save(save_path)
+    return save_path
+
+
+def draw_camera_position_on_map(full_map: Image.Image, x: int, y: int, confidence: float, save_path: str = None):
+    """Draw the camera position as a highlighted point on the map"""
+    img = full_map.copy()
+    draw = ImageDraw.Draw(img)
+    
+    # Draw a large circle for the camera position
+    radius = 15
+    # Outer circle (white border)
+    draw.ellipse([x-radius-3, y-radius-3, x+radius+3, y+radius+3], fill=(255, 255, 255), outline=(0, 0, 0), width=2)
+    # Inner circle (red)
+    draw.ellipse([x-radius, y-radius, x+radius, y+radius], fill=(255, 0, 0), outline=(255, 255, 255), width=2)
+    
+    # Add a crosshair for precision
+    draw.line([x-20, y, x+20, y], fill=(255, 255, 255), width=3)
+    draw.line([x, y-20, x, y+20], fill=(255, 255, 255), width=3)
+    
+    # Add confidence label
+    try:
+        font = ImageFont.load_default()
+    except Exception:
+        font = None
+    
+    label = f"Camera Position (conf: {confidence:.3f})"
+    label_x = max(10, x - 100)
+    label_y = max(10, y - 40)
+    
+    # Label background
+    if font:
+        try:
+            # Try new PIL method first
+            bbox = draw.textbbox((0, 0), label, font=font)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except AttributeError:
+            # Fallback to old method
+            tw, th = draw.textsize(label, font=font)
+    else:
+        try:
+            bbox = draw.textbbox((0, 0), label)
+            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        except AttributeError:
+            tw, th = draw.textsize(label)
+    draw.rectangle([label_x-5, label_y-5, label_x + tw + 10, label_y + th + 5], fill=(0, 0, 0), outline=(255, 255, 255))
+    draw.text((label_x, label_y), label, fill=(255, 255, 255), font=font)
+    
+    if save_path is None:
+        save_path = os.path.join(OUTPUT_DIR, "camera_position_on_map.png")
     img.save(save_path)
     return save_path
 
@@ -277,7 +344,15 @@ def compute_global_point_from_candidate(candidate: Dict[str, Any]) -> Dict[str, 
 # -------------------------
 
 def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3, samples: int = 3, temperature: float = 0.2, top_p: float = 0.9):
+    start_time = time.time()
+    
+    if not json_only:
+        print("Loading model...")
+    model_load_start = time.time()
     processor, model = load_model()
+    model_load_time = time.time() - model_load_start
+    if not json_only:
+        print(f"Model loaded in {model_load_time:.2f}s")
 
     cam_img = load_image(camera_path)
     map_img = load_image(map_path)
@@ -289,7 +364,14 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
         print(f"Generated {len(tiles)} map tiles.")
 
     candidates = []
+    inference_start = time.time()
+    total_tiles = len(tiles)
+    
     for idx, (tile_img, offset) in enumerate(tiles):
+        if not json_only:
+            print(f"Processing tile {idx+1}/{total_tiles}...")
+        
+        tile_start = time.time()
         roi_pack = localize_camera_on_tile(
             processor,
             model,
@@ -299,8 +381,12 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             temperature=temperature,
             top_p=top_p,
         )
+        tile_time = time.time() - tile_start
+        
         if DEBUG and not json_only:
             print(f"[TILE {idx}] ROI pack:", roi_pack)
+            print(f"[TILE {idx}] Processed in {tile_time:.2f}s")
+        
         conf = float(roi_pack.get("confidence", 0) or 0)
         # rank by confidence only now
         rank_score = conf
@@ -311,6 +397,8 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             "rank_score": rank_score,
             "tile_img": tile_img,
         })
+    
+    inference_time = time.time() - inference_start
 
     candidates = sorted(candidates, key=lambda x: x.get("rank_score", 0), reverse=True)
 
@@ -324,6 +412,18 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             return
         best = candidates[0]
         point = compute_global_point_from_candidate(best)
+        # Generate camera position visualization
+        if not no_viz:
+            camera_pos_save = draw_camera_position_on_map(
+                map_img, 
+                point["x"], 
+                point["y"], 
+                point["roi_confidence"]
+            )
+            print(f"→ Camera position visualization saved: {camera_pos_save}")
+        
+        total_time = time.time() - start_time
+        
         output = {
             "success": True,
             "position": {"x": point["x"], "y": point["y"]},
@@ -332,6 +432,13 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             "tile_offset": point["tile_offset"],
             "roi_confidence": point["roi_confidence"],
             "rank_score": point["rank_score"],
+            "timing": {
+                "model_load_time": round(model_load_time, 2),
+                "inference_time": round(inference_time, 2),
+                "total_time": round(total_time, 2),
+                "tiles_processed": total_tiles,
+                "avg_time_per_tile": round(inference_time / total_tiles, 2) if total_tiles > 0 else 0
+            },
             "meta": {
                 "model_id": MODEL_ID,
                 "tile_size": tile_size,
@@ -364,8 +471,22 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             # full map visualization
             full_map_save = draw_rois_on_full_map(map_img, candidates, top_k=min(top_k, len(candidates)))
             print(f"→ Full map with ROIs saved: {full_map_save}")
+            
+            # Camera position visualization
+            best = candidates[0]
+            point = compute_global_point_from_candidate(best)
+            camera_pos_save = draw_camera_position_on_map(
+                map_img, 
+                point["x"], 
+                point["y"], 
+                point["roi_confidence"]
+            )
+            print(f"→ Camera position visualization saved: {camera_pos_save}")
 
-    print("\n[Pipeline finished] — next step is fine geometric alignment with CV matcher (e.g., LoFTR).")
+    total_time = time.time() - start_time
+    print(f"\n[Pipeline finished] — Total time: {total_time:.2f}s")
+    print(f"Model load: {model_load_time:.2f}s, Inference: {inference_time:.2f}s")
+    print("Next step is fine geometric alignment with CV matcher (e.g., LoFTR).")
 
 # -------------------------
 # Entry Point
