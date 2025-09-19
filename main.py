@@ -11,6 +11,7 @@ import os
 import io
 import json
 import re
+import argparse
 from typing import List, Tuple, Dict, Any
 from PIL import Image, ImageDraw, ImageFont
 import torch
@@ -171,7 +172,7 @@ def match_descriptions_nl(processor, model, cam_nl: str, map_nl: str) -> Dict[st
     ]
     chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
     inputs = processor(text=chat_str, return_tensors="pt").to(model.device)
-    out = model.generate(**inputs, max_new_tokens=220)
+    out = model.generate(**inputs, max_new_tokens=220, do_sample=False)
     resp = processor.decode(out[0], skip_special_tokens=True)
     return safe_json_parse(resp)
 
@@ -204,7 +205,7 @@ def roi_from_descriptions(processor, model, cam_nl: str, map_nl: str, map_tile: 
     ]
     chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
     inputs = processor(text=chat_str, images=[map_tile], return_tensors="pt").to(model.device)
-    out = model.generate(**inputs, max_new_tokens=280)
+    out = model.generate(**inputs, max_new_tokens=280, do_sample=False)
     resp = processor.decode(out[0], skip_special_tokens=True)
     return safe_json_parse(resp)
 
@@ -263,36 +264,68 @@ def draw_rois_on_full_map(full_map: Image.Image, candidates: List[Dict[str, Any]
     return save_path
 
 # -------------------------
+# Helpers: Candidate selection and global point
+# -------------------------
+
+def compute_global_point_from_candidate(candidate: Dict[str, Any]) -> Dict[str, Any]:
+    result = candidate.get("result", {})
+    bbox = result.get("bounding_box") or []
+    offset_x, offset_y = candidate.get("tile_offset", (0, 0))
+    if isinstance(bbox, (list, tuple)) and len(bbox) == 4:
+        x_min, y_min, x_max, y_max = bbox
+        cx = (float(x_min) + float(x_max)) / 2.0 + float(offset_x)
+        cy = (float(y_min) + float(y_max)) / 2.0 + float(offset_y)
+        x_px = int(round(cx))
+        y_px = int(round(cy))
+    else:
+        x_px, y_px = None, None
+
+    return {
+        "x": x_px,
+        "y": y_px,
+        "bounding_box": bbox,
+        "tile_index": candidate.get("tile_index"),
+        "tile_offset": list(candidate.get("tile_offset", (0, 0))),
+        "roi_confidence": float(result.get("confidence", 0) or 0),
+        "semantic_score": float(candidate.get("semantic", {}).get("score", 0) or 0),
+        "rank_score": float(candidate.get("rank_score", 0) or 0),
+    }
+
+
+# -------------------------
 # Main Pipeline
 # -------------------------
 
-def main(camera_path: str, map_path: str):
+def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3):
     processor, model = load_model()
 
     cam_img = load_image(camera_path)
     map_img = load_image(map_path)
 
-    print("[Step 1] Describing camera (natural language, no weather)...")
+    if not json_only:
+        print("[Step 1] Describing camera (natural language, no weather)...")
     cam_nl = describe_camera_nl(processor, model, cam_img)
-    if DEBUG:
+    if DEBUG and not json_only:
         print("Camera NL:\n", cam_nl)
 
-    print("[Step 2] Splitting map into tiles and describing (natural language, no weather)...")
-    tiles = split_into_tiles(map_img, tile_size=1024, stride=512)
-    print(f"Generated {len(tiles)} map tiles.")
+    if not json_only:
+        print("[Step 2] Splitting map into tiles and describing (natural language, no weather)...")
+    tiles = split_into_tiles(map_img, tile_size=tile_size, stride=stride)
+    if not json_only:
+        print(f"Generated {len(tiles)} map tiles.")
 
     candidates = []
     for idx, (tile_img, offset) in enumerate(tiles):
         map_nl = describe_map_tile_nl(processor, model, tile_img)
-        if DEBUG:
+        if DEBUG and not json_only:
             print(f"\n[TILE {idx}] Map NL:\n", map_nl)
         # NL-only semantic matching
         score_pack = match_descriptions_nl(processor, model, cam_nl, map_nl)
-        if DEBUG:
+        if DEBUG and not json_only:
             print(f"[TILE {idx}] Semantic match:", score_pack)
         # Always attempt ROI from descriptions + tile image (best guess)
         roi_pack = roi_from_descriptions(processor, model, cam_nl, map_nl, tile_img)
-        if DEBUG:
+        if DEBUG and not json_only:
             print(f"[TILE {idx}] ROI pack:", roi_pack)
         # combine info
         conf = float(roi_pack.get("confidence", 0) or 0)
@@ -312,24 +345,54 @@ def main(camera_path: str, map_path: str):
 
     candidates = sorted(candidates, key=lambda x: x.get("rank_score", 0), reverse=True)
 
+    if json_only:
+        if not candidates:
+            print(json.dumps({
+                "success": False,
+                "error": "no_candidates",
+                "message": "No candidates found",
+            }))
+            return
+        best = candidates[0]
+        point = compute_global_point_from_candidate(best)
+        output = {
+            "success": True,
+            "position": {"x": point["x"], "y": point["y"]},
+            "bounding_box": point["bounding_box"],
+            "tile_index": point["tile_index"],
+            "tile_offset": point["tile_offset"],
+            "roi_confidence": point["roi_confidence"],
+            "semantic_score": point["semantic_score"],
+            "rank_score": point["rank_score"],
+            "meta": {
+                "model_id": MODEL_ID,
+                "tile_size": tile_size,
+                "stride": stride,
+            }
+        }
+        print(json.dumps(output))
+        return
+
     print("\n[Step 3] Top candidate ROIs (blended rank: 0.6*ROI_conf + 0.4*NL_score):")
     if not candidates:
         print("⚠️ No candidates found.")
     else:
-        for i, c in enumerate(candidates[:3]):
+        for i, c in enumerate(candidates[:top_k]):
             printable = {k: v for k, v in c.items() if k not in ("tile_img", "camera_nl", "map_nl")}
             print(json.dumps(printable, indent=2))
-            # per-tile visualization
-            bbox = c["result"].get("bounding_box")
-            conf = c["result"].get("confidence", 0)
-            label = f"#{i+1} conf={float(conf or 0):.2f}"
-            tile_save = os.path.join(OUTPUT_DIR, f"candidate_tile_{i+1}.png")
-            draw_bbox_on_tile(c["tile_img"], bbox, label, tile_save)
-            print(f"→ Tile ROI saved: {tile_save}")
+            if not no_viz:
+                # per-tile visualization
+                bbox = c["result"].get("bounding_box")
+                conf = c["result"].get("confidence", 0)
+                label = f"#{i+1} conf={float(conf or 0):.2f}"
+                tile_save = os.path.join(OUTPUT_DIR, f"candidate_tile_{i+1}.png")
+                draw_bbox_on_tile(c["tile_img"], bbox, label, tile_save)
+                print(f"→ Tile ROI saved: {tile_save}")
 
-        # full map visualization
-        full_map_save = draw_rois_on_full_map(map_img, candidates, top_k=min(3, len(candidates)))
-        print(f"→ Full map with ROIs saved: {full_map_save}")
+        if not no_viz:
+            # full map visualization
+            full_map_save = draw_rois_on_full_map(map_img, candidates, top_k=min(top_k, len(candidates)))
+            print(f"→ Full map with ROIs saved: {full_map_save}")
 
     print("\n[Pipeline finished] — next step is fine geometric alignment with CV matcher (e.g., LoFTR).")
 
@@ -337,6 +400,26 @@ def main(camera_path: str, map_path: str):
 # Entry Point
 # -------------------------
 if __name__ == "__main__":
-    camera_path = "camera.jpg"
-    map_path = "map.jpg"  # or .png
-    main(camera_path, map_path)
+    parser = argparse.ArgumentParser(description="Camera-to-Map ROI Localization")
+    parser.add_argument("--camera", type=str, default="camera.jpg", help="Path to camera image")
+    parser.add_argument("--map", dest="map_path", type=str, default="map.jpg", help="Path to map image")
+    parser.add_argument("--tile-size", type=int, default=1024, help="Tile size for map tiling")
+    parser.add_argument("--stride", type=int, default=512, help="Stride for map tiling")
+    parser.add_argument("--json", dest="json_only", action="store_true", help="Output JSON with global (x,y) only")
+    parser.add_argument("--no-viz", action="store_true", help="Disable saving visualization images")
+    parser.add_argument("--top-k", type=int, default=3, help="Number of top candidates to show/visualize")
+    args = parser.parse_args()
+
+    # If strict JSON mode, reduce logs
+    if args.json_only:
+        DEBUG = False
+
+    main(
+        args.camera,
+        args.map_path,
+        tile_size=args.tile_size,
+        stride=args.stride,
+        json_only=args.json_only,
+        no_viz=args.no_viz,
+        top_k=args.top_k,
+    )
