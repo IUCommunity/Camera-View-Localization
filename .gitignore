@@ -174,8 +174,8 @@ cython_debug/
 .pypirc
 
 # Img
-.jpg
-.png
+*.jpg
+*.png
 
 # Cursor  
 #  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 

@@ -99,115 +99,95 @@ def safe_json_parse(resp: str) -> Dict[str, Any]:
             return {}
 
 # -------------------------
-# NL Descriptions (ignore weather/season/transients)
+# Direct Camera→Tile Localization (JSON)
 # -------------------------
 
-def describe_camera_nl(processor, model, cam_img: Image.Image) -> str:
+def localize_camera_on_tile(
+    processor,
+    model,
+    cam_img: Image.Image,
+    map_tile: Image.Image,
+    *,
+    samples: int = 3,
+    temperature: float = 0.2,
+    top_p: float = 0.9,
+    max_new_tokens: int = 220,
+) -> Dict[str, Any]:
     prompt = (
-        "You are a meticulous scene describer. Describe the CAMERA image in natural language.\n"
-        "Focus ONLY on structural, spatial, and semantic cues that persist on maps: roads, intersections, building facades, footprints, gates/fences, sidewalks, crosswalks, traffic lights/signs, permanent landmarks.\n"
-        "IGNORE weather, lighting, time of day, shadows, reflections, clouds, fog/snow/rain, and seasonal vegetation changes.\n"
-        "Use concise sentences; include relative positions (left/center/right/top/bottom) and relations (next to, across from, corner of)."
+        "You are a precise spatial localizer.\n"
+        "Task: Given a CAMERA image (ground) and a MAP_TILE image (aerial), predict where the camera view lies inside the MAP_TILE.\n"
+        "Rules:\n"
+        "- Use persistent structures: roads, intersections, building footprints, plazas, fences/gates, sidewalks, crosswalks, permanent landmarks.\n"
+        "- Ignore weather, lighting, shadows, seasons.\n"
+        "Output ONLY valid JSON with fields: {\n"
+        "  \"bounding_box\": [x_min, y_min, x_max, y_max],\n"
+        "  \"confidence\": float\n"
+        "}. Coordinates are MAP_TILE pixel coordinates. No extra text."
     )
-    chat = [
-        {"role": "system", "content": "You produce detailed yet concise scene descriptions. No JSON."},
-        {"role": "user", "content": [
-            {"type": "image"},
-            {"type": "text", "text": prompt},
-        ]},
-    ]
-    chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
-    inputs = processor(text=chat_str, images=[cam_img], return_tensors="pt").to(model.device)
-    out = model.generate(**inputs, max_new_tokens=350)
-    resp = processor.decode(out[0], skip_special_tokens=True)
-    # strip any role echoes
-    if "assistant" in resp:
-        resp = resp.split("assistant", 1)[-1].strip()
-    return resp.strip()
 
+    best_pack: Dict[str, Any] = {}
+    best_conf = -1.0
+    packs: List[Dict[str, Any]] = []
 
-def describe_map_tile_nl(processor, model, map_tile: Image.Image) -> str:
-    prompt = (
-        "You are a cartography analyst. Describe the MAP_TILE in natural language.\n"
-        "Focus on map features: road layout (orientation, intersections, corners), building footprints/shapes, parking lots, plazas, fences/gates, notable landmarks (banks, stores, schools), open areas.\n"
-        "IGNORE weather/season, lighting, shadows.\n"
-        "Use relative positions within the tile (north/south/east/west/center) and relations (adjacent to, at corner, across)."
-    )
-    chat = [
-        {"role": "system", "content": "You describe map tiles clearly. No JSON."},
-        {"role": "user", "content": [
-            {"type": "image"},
-            {"type": "text", "text": prompt},
-        ]},
-    ]
-    chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
-    inputs = processor(text=chat_str, images=[map_tile], return_tensors="pt").to(model.device)
-    out = model.generate(**inputs, max_new_tokens=350)
-    resp = processor.decode(out[0], skip_special_tokens=True)
-    if "assistant" in resp:
-        resp = resp.split("assistant", 1)[-1].strip()
-    return resp.strip()
+    for i in range(max(1, samples)):
+        chat = [
+            {"role": "system", "content": "You output JSON only. Do not include explanations."},
+            {"role": "user", "content": [
+                {"type": "image"},  # CAMERA
+                {"type": "image"},  # MAP_TILE
+                {"type": "text", "text": prompt},
+            ]},
+        ]
+        chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
+        inputs = processor(text=chat_str, images=[cam_img, map_tile], return_tensors="pt").to(model.device)
 
-# -------------------------
-# Text-only Semantic Matching (NL↔NL) → score & rationale
-# -------------------------
+        gen_kwargs: Dict[str, Any] = {"max_new_tokens": max_new_tokens}
+        if samples > 1 or temperature > 0:
+            gen_kwargs.update({"do_sample": True, "temperature": max(0.01, float(temperature)), "top_p": float(top_p)})
+        else:
+            gen_kwargs.update({"do_sample": False})
 
-def match_descriptions_nl(processor, model, cam_nl: str, map_nl: str) -> Dict[str, Any]:
-    prompt = f"""
-    You are a spatial reasoning assistant. Compare a ground-level CAMERA description with an aerial MAP_TILE description.
-    The camera view is a partial subset of the map. Ignore weather/seasonal/lighting details.
+        out = model.generate(**inputs, **gen_kwargs)
+        resp = processor.decode(out[0], skip_special_tokens=True)
+        pack = safe_json_parse(resp)
+        if not isinstance(pack, dict):
+            continue
+        conf = float(pack.get("confidence", 0) or 0)
+        bbox = pack.get("bounding_box")
+        # quick bbox sanity
+        if not (isinstance(bbox, (list, tuple)) and len(bbox) == 4):
+            continue
+        packs.append(pack)
+        if conf > best_conf:
+            best_conf = conf
+            best_pack = pack
 
-    CAMERA (natural language):\n{cam_nl}\n\nMAP_TILE (natural language):\n{map_nl}
+    # fallback if nothing parsed
+    if not best_pack:
+        return {"bounding_box": [0, 0, map_tile.size[0]-1, map_tile.size[1]-1], "confidence": 0.0}
 
-    Task: Decide how well the map tile can contain the camera view as a subregion. Return ONLY valid JSON:
-    {{
-      "match": true/false,
-      "score": float,   // 0..1 semantic fit
-      "rationale": "short explanation"
-    }}
-    """
-    chat = [
-        {"role": "system", "content": "You compare NL descriptions and output JSON only."},
-        {"role": "user", "content": prompt},
-    ]
-    chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
-    inputs = processor(text=chat_str, return_tensors="pt").to(model.device)
-    out = model.generate(**inputs, max_new_tokens=220, do_sample=False)
-    resp = processor.decode(out[0], skip_special_tokens=True)
-    return safe_json_parse(resp)
+    # Optional: combine boxes if multiple samples parsed → weighted average center + size
+    if len(packs) > 1:
+        import math
+        w, h = map_tile.size
+        total_w = 0.0
+        total = 0.0
+        sum_x1 = sum_y1 = sum_x2 = sum_y2 = 0.0
+        for p in packs:
+            c = max(0.0, float(p.get("confidence", 0) or 0))
+            b = p.get("bounding_box", [0, 0, w-1, h-1])
+            x1, y1, x2, y2 = [float(v) for v in b]
+            sum_x1 += c * x1
+            sum_y1 += c * y1
+            sum_x2 += c * x2
+            sum_y2 += c * y2
+            total += c
+        if total > 0:
+            avg_bbox = [int(round(sum_x1/total)), int(round(sum_y1/total)), int(round(sum_x2/total)), int(round(sum_y2/total))]
+            avg_conf = max_conf = max(p.get("confidence", 0) for p in packs)
+            return {"bounding_box": avg_bbox, "confidence": float(avg_conf)}
 
-# -------------------------
-# ROI Extraction (JSON) from NL + MAP_TILE image
-# -------------------------
-
-def roi_from_descriptions(processor, model, cam_nl: str, map_nl: str, map_tile: Image.Image) -> Dict[str, Any]:
-    prompt = f"""
-    You are a spatial localizer. Given a MAP_TILE image and the following NL descriptions:
-    - CAMERA: {cam_nl}
-    - MAP_TILE: {map_nl}
-
-    The camera view is a partial subset of the map tile. Use persistent structures (roads, intersections, buildings, gates, sidewalks, traffic lights/signs). Ignore weather/season/shadows/reflections.
-
-    Return ONLY valid JSON with a best-guess ROI in MAP_TILE pixel coordinates:
-    {{
-      "match": true/false,
-      "rationale": "...",
-      "bounding_box": [x_min, y_min, x_max, y_max],
-      "confidence": float
-    }}
-    """
-    chat = [
-        {"role": "system", "content": "You output JSON only, with a bounding box ROI."},
-        {"role": "user", "content": [
-            {"type": "image"},  # map tile image for pixel coordinates
-            {"type": "text", "text": prompt},
-        ]},
-    ]
-    chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
-    inputs = processor(text=chat_str, images=[map_tile], return_tensors="pt").to(model.device)
-    out = model.generate(**inputs, max_new_tokens=280, do_sample=False)
-    resp = processor.decode(out[0], skip_special_tokens=True)
-    return safe_json_parse(resp)
+    return best_pack
 
 # -------------------------
 # Visualization Helpers
@@ -296,48 +276,37 @@ def compute_global_point_from_candidate(candidate: Dict[str, Any]) -> Dict[str, 
 # Main Pipeline
 # -------------------------
 
-def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3):
+def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3, samples: int = 3, temperature: float = 0.2, top_p: float = 0.9):
     processor, model = load_model()
 
     cam_img = load_image(camera_path)
     map_img = load_image(map_path)
 
     if not json_only:
-        print("[Step 1] Describing camera (natural language, no weather)...")
-    cam_nl = describe_camera_nl(processor, model, cam_img)
-    if DEBUG and not json_only:
-        print("Camera NL:\n", cam_nl)
-
-    if not json_only:
-        print("[Step 2] Splitting map into tiles and describing (natural language, no weather)...")
+        print("[Step 1] Splitting map into tiles and localizing camera on each tile...")
     tiles = split_into_tiles(map_img, tile_size=tile_size, stride=stride)
     if not json_only:
         print(f"Generated {len(tiles)} map tiles.")
 
     candidates = []
     for idx, (tile_img, offset) in enumerate(tiles):
-        map_nl = describe_map_tile_nl(processor, model, tile_img)
-        if DEBUG and not json_only:
-            print(f"\n[TILE {idx}] Map NL:\n", map_nl)
-        # NL-only semantic matching
-        score_pack = match_descriptions_nl(processor, model, cam_nl, map_nl)
-        if DEBUG and not json_only:
-            print(f"[TILE {idx}] Semantic match:", score_pack)
-        # Always attempt ROI from descriptions + tile image (best guess)
-        roi_pack = roi_from_descriptions(processor, model, cam_nl, map_nl, tile_img)
+        roi_pack = localize_camera_on_tile(
+            processor,
+            model,
+            cam_img,
+            tile_img,
+            samples=samples,
+            temperature=temperature,
+            top_p=top_p,
+        )
         if DEBUG and not json_only:
             print(f"[TILE {idx}] ROI pack:", roi_pack)
-        # combine info
         conf = float(roi_pack.get("confidence", 0) or 0)
-        sem_score = float(score_pack.get("score", 0) or 0)
-        # simple blended rank (tweak as needed)
-        rank_score = 0.6 * conf + 0.4 * sem_score
+        # rank by confidence only now
+        rank_score = conf
         candidates.append({
             "tile_index": idx,
             "tile_offset": offset,
-            "camera_nl": cam_nl,
-            "map_nl": map_nl,
-            "semantic": score_pack,
             "result": roi_pack,
             "rank_score": rank_score,
             "tile_img": tile_img,
@@ -362,12 +331,14 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             "tile_index": point["tile_index"],
             "tile_offset": point["tile_offset"],
             "roi_confidence": point["roi_confidence"],
-            "semantic_score": point["semantic_score"],
             "rank_score": point["rank_score"],
             "meta": {
                 "model_id": MODEL_ID,
                 "tile_size": tile_size,
                 "stride": stride,
+                "samples": samples,
+                "temperature": temperature,
+                "top_p": top_p,
             }
         }
         print(json.dumps(output))
@@ -378,7 +349,7 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
         print("⚠️ No candidates found.")
     else:
         for i, c in enumerate(candidates[:top_k]):
-            printable = {k: v for k, v in c.items() if k not in ("tile_img", "camera_nl", "map_nl")}
+            printable = {k: v for k, v in c.items() if k not in ("tile_img",)}
             print(json.dumps(printable, indent=2))
             if not no_viz:
                 # per-tile visualization
@@ -408,6 +379,9 @@ if __name__ == "__main__":
     parser.add_argument("--json", dest="json_only", action="store_true", help="Output JSON with global (x,y) only")
     parser.add_argument("--no-viz", action="store_true", help="Disable saving visualization images")
     parser.add_argument("--top-k", type=int, default=3, help="Number of top candidates to show/visualize")
+    parser.add_argument("--samples", type=int, default=3, help="Number of stochastic samples per tile")
+    parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature")
+    parser.add_argument("--top-p", type=float, default=0.9, help="Top-p nucleus sampling")
     args = parser.parse_args()
 
     # If strict JSON mode, reduce logs
@@ -422,4 +396,7 @@ if __name__ == "__main__":
         json_only=args.json_only,
         no_viz=args.no_viz,
         top_k=args.top_k,
+        samples=args.samples,
+        temperature=args.temperature,
+        top_p=args.top_p,
     )
