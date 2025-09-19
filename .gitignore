@@ -176,6 +176,7 @@ cython_debug/
 # Img
 *.jpg
 *.png
+*.zip
 
 # Cursor  
 #  Cursor is an AI-powered code editor.`.cursorignore` specifies files/directories to 
