@@ -46,8 +46,11 @@ def load_model():
 # Image Utilities
 # -------------------------
 
-def load_image(path: str) -> Image.Image:
-    return Image.open(path).convert("RGB")
+def load_image(path: str, max_size: int = None) -> Image.Image:
+    img = Image.open(path).convert("RGB")
+    if max_size and (img.width > max_size or img.height > max_size):
+        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+    return img
 
 
 def split_into_tiles(img: Image.Image, tile_size: int = 1024, stride: int = 512) -> List[Tuple[Image.Image, Tuple[int, int]]]:
@@ -113,6 +116,7 @@ def localize_camera_on_tile(
     temperature: float = 0.2,
     top_p: float = 0.9,
     max_new_tokens: int = 220,
+    fast_mode: bool = False,
 ) -> Dict[str, Any]:
     prompt = (
         "You are a precise spatial localizer.\n"
@@ -129,6 +133,12 @@ def localize_camera_on_tile(
     best_pack: Dict[str, Any] = {}
     best_conf = -1.0
     packs: List[Dict[str, Any]] = []
+    
+    # Fast mode: reduce samples and use deterministic generation
+    if fast_mode:
+        samples = 1
+        temperature = 0.0
+        max_new_tokens = 150
 
     for i in range(max(1, samples)):
         chat = [
@@ -282,7 +292,7 @@ def compute_global_point_from_candidate(candidate: Dict[str, Any]) -> Dict[str, 
 # Main Pipeline
 # -------------------------
 
-def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3, samples: int = 3, temperature: float = 0.2, top_p: float = 0.9):
+def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3, samples: int = 3, temperature: float = 0.2, top_p: float = 0.9, early_termination_threshold: float = 0.85, max_tiles: int = None, fast_mode: bool = False, max_image_size: int = None):
     # Extract camera name from path for result naming
     camera_name = os.path.splitext(os.path.basename(camera_path))[0]
     start_time = time.time()
@@ -295,8 +305,8 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
     if not json_only:
         print(f"Model loaded in {model_load_time:.2f}s")
 
-    cam_img = load_image(camera_path)
-    map_img = load_image(map_path)
+    cam_img = load_image(camera_path, max_image_size)
+    map_img = load_image(map_path, max_image_size)
 
     if not json_only:
         print("[Step 1] Splitting map into tiles and localizing camera on each tile...")
@@ -307,6 +317,13 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
     candidates = []
     inference_start = time.time()
     total_tiles = len(tiles)
+    
+    # Limit tiles if max_tiles is specified
+    if max_tiles and max_tiles < total_tiles:
+        tiles = tiles[:max_tiles]
+        total_tiles = len(tiles)
+        if not json_only:
+            print(f"Limited to first {total_tiles} tiles for faster processing")
     
     for idx, (tile_img, offset) in enumerate(tiles):
         if not json_only:
@@ -321,6 +338,7 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             samples=samples,
             temperature=temperature,
             top_p=top_p,
+            fast_mode=fast_mode,
         )
         tile_time = time.time() - tile_start
         
@@ -338,6 +356,12 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             "rank_score": rank_score,
             "tile_img": tile_img,
         })
+        
+        # Early termination if high confidence found
+        if conf >= early_termination_threshold:
+            if not json_only:
+                print(f"🎯 Early termination: Found high confidence match ({conf:.3f}) at tile {idx+1}")
+            break
     
     inference_time = time.time() - inference_start
 
@@ -434,6 +458,10 @@ if __name__ == "__main__":
     parser.add_argument("--samples", type=int, default=3, help="Number of stochastic samples per tile")
     parser.add_argument("--temperature", type=float, default=0.2, help="Sampling temperature")
     parser.add_argument("--top-p", type=float, default=0.9, help="Top-p nucleus sampling")
+    parser.add_argument("--early-termination", type=float, default=0.85, help="Stop processing when confidence >= this threshold")
+    parser.add_argument("--max-tiles", type=int, default=None, help="Maximum number of tiles to process (for speed)")
+    parser.add_argument("--fast", action="store_true", help="Enable fast mode (1 sample, deterministic, shorter output)")
+    parser.add_argument("--max-image-size", type=int, default=None, help="Resize images if larger than this (for speed)")
     args = parser.parse_args()
 
     # If strict JSON mode, reduce logs
@@ -451,4 +479,8 @@ if __name__ == "__main__":
         samples=args.samples,
         temperature=args.temperature,
         top_p=args.top_p,
+        early_termination_threshold=args.early_termination,
+        max_tiles=args.max_tiles,
+        fast_mode=args.fast,
+        max_image_size=args.max_image_size,
     )
