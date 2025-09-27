@@ -194,74 +194,13 @@ def localize_camera_on_tile(
 # Visualization Helpers
 # -------------------------
 
-def draw_bbox_on_tile(tile_img: Image.Image, bbox: List[int], label: str, save_path: str):
-    img = tile_img.copy()
-    draw = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.load_default()
-    except Exception:
-        font = None
-    if bbox and isinstance(bbox, (list, tuple)) and len(bbox) == 4:
-        draw.rectangle(bbox, outline=(255, 0, 0), width=4)
-        # label background
-        x0, y0 = bbox[0], max(0, bbox[1] - 18)
-        text = label
-        if font:
-            try:
-                bbox = draw.textbbox((0, 0), text, font=font)
-                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            except AttributeError:
-                tw, th = draw.textsize(text, font=font)
-        else:
-            try:
-                bbox = draw.textbbox((0, 0), text)
-                tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-            except AttributeError:
-                tw, th = draw.textsize(text)
-        draw.rectangle([x0, y0, x0 + tw + 6, y0 + th + 4], fill=(255, 0, 0))
-        draw.text((x0 + 3, y0 + 2), text, fill=(255, 255, 255), font=font)
-    img.save(save_path)
+# Removed draw_bbox_on_tile function as it's no longer needed
 
 
-def draw_rois_on_full_map(full_map: Image.Image, candidates: List[Dict[str, Any]], top_k: int = 3, save_path: str = None):
-    img = full_map.copy()
-    draw = ImageDraw.Draw(img)
-    try:
-        font = ImageFont.load_default()
-    except Exception:
-        font = None
-    for i, c in enumerate(candidates[:top_k]):
-        offset = c.get("tile_offset", (0, 0))
-        bbox = c.get("result", {}).get("bounding_box", None)
-        conf = c.get("result", {}).get("confidence", 0)
-        if bbox and len(bbox) == 4:
-            # project to full-map coords
-            b = [bbox[0] + offset[0], bbox[1] + offset[1], bbox[2] + offset[0], bbox[3] + offset[1]]
-            color = (255, 0, 0) if i == 0 else (255, 165, 0)
-            draw.rectangle(b, outline=color, width=4)
-            label = f"#{i+1} conf={conf:.2f}"
-            x0, y0 = b[0], max(0, b[1] - 18)
-            if font:
-                try:
-                    bbox = draw.textbbox((0, 0), label, font=font)
-                    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-                except AttributeError:
-                    tw, th = draw.textsize(label, font=font)
-            else:
-                try:
-                    bbox = draw.textbbox((0, 0), label)
-                    tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-                except AttributeError:
-                    tw, th = draw.textsize(label)
-            draw.rectangle([x0, y0, x0 + tw + 6, y0 + th + 4], fill=color)
-            draw.text((x0 + 3, y0 + 2), label, fill=(255, 255, 255), font=font)
-    if save_path is None:
-        save_path = os.path.join(OUTPUT_DIR, "full_map_with_rois.png")
-    img.save(save_path)
-    return save_path
+# Removed draw_rois_on_full_map function as it's no longer needed
 
 
-def draw_camera_position_on_map(full_map: Image.Image, x: int, y: int, confidence: float, save_path: str = None):
+def draw_camera_position_on_map(full_map: Image.Image, x: int, y: int, confidence: float, camera_name: str, save_path: str = None):
     """Draw the camera position as a highlighted point on the map"""
     img = full_map.copy()
     draw = ImageDraw.Draw(img)
@@ -306,7 +245,7 @@ def draw_camera_position_on_map(full_map: Image.Image, x: int, y: int, confidenc
     draw.text((label_x, label_y), label, fill=(255, 255, 255), font=font)
     
     if save_path is None:
-        save_path = os.path.join(OUTPUT_DIR, "camera_position_on_map.png")
+        save_path = os.path.join(OUTPUT_DIR, f"result-{camera_name}.png")
     img.save(save_path)
     return save_path
 
@@ -344,6 +283,8 @@ def compute_global_point_from_candidate(candidate: Dict[str, Any]) -> Dict[str, 
 # -------------------------
 
 def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3, samples: int = 3, temperature: float = 0.2, top_p: float = 0.9):
+    # Extract camera name from path for result naming
+    camera_name = os.path.splitext(os.path.basename(camera_path))[0]
     start_time = time.time()
     
     if not json_only:
@@ -418,7 +359,8 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
                 map_img, 
                 point["x"], 
                 point["y"], 
-                point["roi_confidence"]
+                point["roi_confidence"],
+                camera_name
             )
             print(f"→ Camera position visualization saved: {camera_pos_save}")
         
@@ -458,20 +400,8 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
         for i, c in enumerate(candidates[:top_k]):
             printable = {k: v for k, v in c.items() if k not in ("tile_img",)}
             print(json.dumps(printable, indent=2))
-            if not no_viz:
-                # per-tile visualization
-                bbox = c["result"].get("bounding_box")
-                conf = c["result"].get("confidence", 0)
-                label = f"#{i+1} conf={float(conf or 0):.2f}"
-                tile_save = os.path.join(OUTPUT_DIR, f"candidate_tile_{i+1}.png")
-                draw_bbox_on_tile(c["tile_img"], bbox, label, tile_save)
-                print(f"→ Tile ROI saved: {tile_save}")
 
         if not no_viz:
-            # full map visualization
-            full_map_save = draw_rois_on_full_map(map_img, candidates, top_k=min(top_k, len(candidates)))
-            print(f"→ Full map with ROIs saved: {full_map_save}")
-            
             # Camera position visualization
             best = candidates[0]
             point = compute_global_point_from_candidate(best)
@@ -479,7 +409,8 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
                 map_img, 
                 point["x"], 
                 point["y"], 
-                point["roi_confidence"]
+                point["roi_confidence"],
+                camera_name
             )
             print(f"→ Camera position visualization saved: {camera_pos_save}")
 
