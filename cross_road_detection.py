@@ -222,7 +222,7 @@ def main(image_path: str, *, samples: int = 3, temperature: float = 0.1, top_p: 
         }
         print(json.dumps(output))
     else:
-        print(f"\n🎯 Cross Road Detection Result: {result}")
+        print(f"\n🎯 Cross Road/Curved Road Detection Result: {result}")
         print(f"\n[Pipeline finished] — Total time: {total_time:.2f}s")
         print(f"Model load: {model_load_time:.2f}s, Detection: {detection_time:.2f}s")
 
@@ -230,7 +230,7 @@ def main(image_path: str, *, samples: int = 3, temperature: float = 0.1, top_p: 
 # Entry Point
 # -------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Cross Road Detection with Qwen2.5-VL")
+    parser = argparse.ArgumentParser(description="Cross Road and Curved Road Detection with Qwen2.5-VL")
     parser.add_argument("--image", type=str, required=True, help="Path to input image")
     parser.add_argument("--samples", type=int, default=3, help="Number of samples for majority voting")
     parser.add_argument("--temperature", type=float, default=0.1, help="Sampling temperature")
