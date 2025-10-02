@@ -1,8 +1,8 @@
-# Project: Cross Road Detection with Qwen2.5-VL
+# Project: Cross Road and Curved Road Detection with Qwen2.5-VL
 # ---------------------------------------------------
-# This pipeline detects cross roads in a single input image.
+# This pipeline detects cross roads or curved roads in a single input image.
 # Input: One image
-# Output: "YES" if there's any cross road, "NO" if there isn't any cross roads.
+# Output: "YES" if there's any cross road or curved road, "NO" if there isn't any cross roads or curved roads.
 
 import os
 import json
@@ -104,7 +104,7 @@ def detect_cross_road(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": [
                 {"type": "image"},
-                {"type": "text", "text": "Analyze this image for cross roads. Output only YES or NO."},
+                {"type": "text", "text": "Analyze this image for cross roads or curved roads. Output only YES or NO."},
             ]},
         ]
         
