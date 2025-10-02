@@ -63,8 +63,8 @@ def detect_cross_road(
     fast_mode: bool = False,
 ) -> str:
     """
-    Detect if there are any cross roads in the input image.
-    Returns "YES" if cross roads are detected, "NO" otherwise.
+    Detect if there are any cross roads or curved roads in the input image.
+    Returns "YES" if cross roads or curved roads are detected, "NO" otherwise.
     """
     
     # Clear and specific system prompt for cross road and curved road detection
