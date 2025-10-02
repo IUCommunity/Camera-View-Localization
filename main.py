@@ -1,7 +1,6 @@
-# Project: Camera-to-Map ROI Localization with Cross Road Detection (Optimized for Qwen2.5-VL, NL→ROI)
+# Project: Camera-to-Map ROI Localization with Visualization (Optimized for Qwen2.5-VL, NL→ROI)
 # ---------------------------------------------------
-# This pipeline uses a multi-stage approach:
-# 0) Camera → Cross road/curved road detection (early exit if none detected).
+# This pipeline uses a dual-stage approach:
 # 1) Camera → Natural-language scene description (ignore weather/season/transients).
 # 2) Map tile → Natural-language semantic description (roads, buildings, landmarks; ignore weather/season).
 # 3) Text-only semantic matching between camera-NL and map-NL to score plausibility.
@@ -123,6 +122,7 @@ def localize_camera_on_tile(
     prompt = (
         "You are a precise spatial localizer.\n"
         "Task: Given a CAMERA image (ground) and a MAP_TILE image (aerial), predict where the camera view lies inside the MAP_TILE.\n"
+        "Note: The camera view must contain cross roads or curved roads. So, localize the camera position based on the cross roads or curved roads. Generate the bounding box based on the cross roads or curved roads.\n"
         "Rules:\n"
         "- Use persistent structures: roads, intersections, building footprints, plazas, fences/gates, sidewalks, crosswalks, permanent landmarks.\n"
         "- Ignore weather, lighting, shadows, seasons.\n"
