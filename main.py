@@ -309,7 +309,53 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
     cam_img = load_image(camera_path, max_image_size)
     map_img = load_image(map_path, max_image_size)
 
+    # Step 0: Check if camera view contains cross roads or curved roads
     if not json_only:
+        print("[Step 0] Checking camera view for cross roads or curved roads...")
+    
+    cross_road_detection_start = time.time()
+    cross_road_result = detect_cross_road(
+        processor,
+        model,
+        cam_img,
+        samples=1,  # Use single sample for faster detection
+        temperature=0.0,  # Deterministic
+        fast_mode=True,
+    )
+    cross_road_detection_time = time.time() - cross_road_detection_start
+    
+    if not json_only:
+        print(f"Cross road/curved road detection result: {cross_road_result}")
+        print(f"Detection time: {cross_road_detection_time:.2f}s")
+    
+    # Early exit if no cross roads or curved roads detected
+    if cross_road_result == "NO":
+        if not json_only:
+            print("❌ No cross roads or curved roads detected in camera view. Exiting...")
+        else:
+            # Return JSON response for early exit
+            total_time = time.time() - start_time
+            output = {
+                "success": False,
+                "reason": "no_cross_roads_or_curved_roads",
+                "cross_road_detection_result": cross_road_result,
+                "message": "No cross roads or curved roads detected in camera view",
+                "timing": {
+                    "model_load_time": round(model_load_time, 2),
+                    "cross_road_detection_time": round(cross_road_detection_time, 2),
+                    "total_time": round(total_time, 2)
+                },
+                "meta": {
+                    "model_id": MODEL_ID,
+                    "camera_path": camera_path,
+                    "map_path": map_path
+                }
+            }
+            print(json.dumps(output))
+        return
+    
+    if not json_only:
+        print("✅ Cross roads or curved roads detected. Proceeding with localization...")
         print("[Step 1] Splitting map into tiles and localizing camera on each tile...")
     tiles = split_into_tiles(map_img, tile_size=tile_size, stride=stride)
     if not json_only:
