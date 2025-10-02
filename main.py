@@ -17,6 +17,7 @@ from typing import List, Tuple, Dict, Any
 from PIL import Image, ImageDraw, ImageFont
 import torch
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
+from cross_road_detection import detect_cross_road
 
 # -------------------------
 # Configuration
