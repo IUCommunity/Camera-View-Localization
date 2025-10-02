@@ -67,21 +67,27 @@ def detect_cross_road(
     Returns "YES" if cross roads are detected, "NO" otherwise.
     """
     
-    # Clear and specific system prompt for cross road detection
+    # Clear and specific system prompt for cross road and curved road detection
     system_prompt = (
-        "You are a precise cross road detector. Your task is to analyze the given image and determine if there are any cross roads present.\n\n"
+        "You are a precise road detector. Your task is to analyze the given image and determine if there are any cross roads or curved roads present.\n\n"
         "A cross road is defined as:\n"
         "- An intersection where two or more roads meet and cross each other\n"
         "- Roads that intersect at angles (typically perpendicular or at significant angles)\n"
         "- Visible road markings, lane lines, or traffic patterns that indicate road intersections\n"
         "- Infrastructure elements like traffic lights, stop signs, or crosswalks at intersections\n\n"
+        "A curved road is defined as:\n"
+        "- A road that has a noticeable curve, bend, or arc in its path\n"
+        "- Roads that change direction gradually or sharply (not straight lines)\n"
+        "- Roads with visible curvature in their lane markings or boundaries\n"
+        "- Roads that follow a curved trajectory rather than being perfectly straight\n\n"
         "Important guidelines:\n"
-        "- Look for actual road intersections, not just road segments\n"
-        "- Consider both major and minor road intersections\n"
+        "- Look for actual road intersections (cross roads) or curved road segments\n"
+        "- Consider both major and minor road intersections and curves\n"
         "- Ignore weather conditions, lighting, or seasonal changes\n"
         "- Focus on permanent road infrastructure and markings\n"
-        "- A single road without intersections is NOT a cross road\n\n"
-        "Output ONLY one word: 'YES' if you detect any cross roads, or 'NO' if you do not detect any cross roads.\n"
+        "- A single straight road without intersections or curves is NOT a cross road or curved road\n"
+        "- Both cross roads AND curved roads should result in 'YES'\n\n"
+        "Output ONLY one word: 'YES' if you detect any cross roads or curved roads, or 'NO' if you do not detect any cross roads or curved roads.\n"
         "Do not provide explanations, justifications, or additional text."
     )
 
