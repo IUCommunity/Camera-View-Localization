@@ -1,6 +1,7 @@
-# Project: Camera-to-Map ROI Localization with Visualization (Optimized for Qwen2.5-VL, NL→ROI)
+# Project: Camera-to-Map ROI Localization with Cross Road Detection (Optimized for Qwen2.5-VL, NL→ROI)
 # ---------------------------------------------------
-# This pipeline uses a dual-stage approach:
+# This pipeline uses a multi-stage approach:
+# 0) Camera → Cross road/curved road detection (early exit if none detected).
 # 1) Camera → Natural-language scene description (ignore weather/season/transients).
 # 2) Map tile → Natural-language semantic description (roads, buildings, landmarks; ignore weather/season).
 # 3) Text-only semantic matching between camera-NL and map-NL to score plausibility.
