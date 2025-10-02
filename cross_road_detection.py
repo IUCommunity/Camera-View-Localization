@@ -155,7 +155,7 @@ def detect_cross_road(
 
 def main(image_path: str, *, samples: int = 3, temperature: float = 0.1, top_p: float = 0.9, fast_mode: bool = False, max_image_size: int = None, json_output: bool = False):
     """
-    Main function to detect cross roads in an image.
+    Main function to detect cross roads or curved roads in an image.
     
     Args:
         image_path: Path to the input image
@@ -183,9 +183,9 @@ def main(image_path: str, *, samples: int = 3, temperature: float = 0.1, top_p: 
     if not json_output:
         print(f"Image size: {image.size}")
 
-    # Detect cross roads
+    # Detect cross roads or curved roads
     if not json_output:
-        print("Detecting cross roads...")
+        print("Detecting cross roads or curved roads...")
     detection_start = time.time()
     
     result = detect_cross_road(
