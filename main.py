@@ -447,6 +447,7 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             "rank_score": point["rank_score"],
             "timing": {
                 "model_load_time": round(model_load_time, 2),
+                "cross_road_detection_time": round(cross_road_detection_time, 2),
                 "inference_time": round(inference_time, 2),
                 "total_time": round(total_time, 2),
                 "tiles_processed": total_tiles,
@@ -454,6 +455,7 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             },
             "meta": {
                 "model_id": MODEL_ID,
+                "cross_road_detection_result": cross_road_result,
                 "tile_size": tile_size,
                 "stride": stride,
                 "samples": samples,
@@ -487,7 +489,7 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
 
     total_time = time.time() - start_time
     print(f"\n[Pipeline finished] — Total time: {total_time:.2f}s")
-    print(f"Model load: {model_load_time:.2f}s, Inference: {inference_time:.2f}s")
+    print(f"Model load: {model_load_time:.2f}s, Cross road detection: {cross_road_detection_time:.2f}s, Inference: {inference_time:.2f}s")
     print("Next step is fine geometric alignment with CV matcher (e.g., LoFTR).")
 
 # -------------------------
