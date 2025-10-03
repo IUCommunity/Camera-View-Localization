@@ -159,7 +159,7 @@ def detect_cross_road(
 
 def main(image_path: str, *, samples: int = 3, temperature: float = 0.1, top_p: float = 0.9, fast_mode: bool = False, max_image_size: int = None, json_output: bool = False):
     """
-    Main function to detect cross roads or curved roads in an image.
+    Main function to detect cross roads, curved roads, or non-straight roads in an image.
     
     Args:
         image_path: Path to the input image
