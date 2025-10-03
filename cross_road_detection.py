@@ -1,8 +1,8 @@
-# Project: Cross Road and Curved Road Detection with Qwen2.5-VL
+# Project: Cross Road, Curved Road, and Non-Straight Road Detection with Qwen2.5-VL
 # ---------------------------------------------------
-# This pipeline detects cross roads or curved roads in a single input image.
+# This pipeline detects cross roads, curved roads, or any non-straight roads in a single input image.
 # Input: One image
-# Output: "YES" if there's any cross road or curved road, "NO" if there isn't any cross roads or curved roads.
+# Output: "YES" if there's any cross road, curved road, or non-straight road, "NO" if all roads are perfectly straight.
 
 import os
 import json
