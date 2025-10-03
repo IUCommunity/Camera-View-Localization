@@ -48,7 +48,7 @@ def load_image(path: str, max_size: int = None) -> Image.Image:
     return img
 
 # -------------------------
-# Cross Road Detection
+# Cross Road, Curved Road, and Non-Straight Road Detection
 # -------------------------
 
 def detect_cross_road(
