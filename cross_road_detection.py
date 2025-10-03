@@ -63,31 +63,35 @@ def detect_cross_road(
     fast_mode: bool = False,
 ) -> str:
     """
-    Detect if there are any cross roads or curved roads in the input image.
-    Returns "YES" if cross roads or curved roads are detected, "NO" otherwise.
+    Detect if there are any cross roads, curved roads, or non-straight roads in the input image.
+    Returns "YES" if cross roads, curved roads, or any non-straight roads are detected, "NO" otherwise.
     """
     
     # Clear and specific system prompt for cross road and curved road detection
     system_prompt = (
-        "You are a precise road detector. Your task is to analyze the given image and determine if there are any cross roads or curved roads present.\n\n"
+        "You are a precise road detector. Your task is to analyze the given image and determine if there are any cross roads, curved roads, or roads that are not straight present.\n\n"
         "A cross road is defined as:\n"
         "- An intersection where two or more roads meet and cross each other\n"
         "- Roads that intersect at angles (typically perpendicular or at significant angles)\n"
         "- Visible road markings, lane lines, or traffic patterns that indicate road intersections\n"
         "- Infrastructure elements like traffic lights, stop signs, or crosswalks at intersections\n\n"
-        "A curved road is defined as:\n"
+        "A curved road or non-straight road is defined as:\n"
         "- A road that has a noticeable curve, bend, or arc in its path\n"
         "- Roads that change direction gradually or sharply (not straight lines)\n"
         "- Roads with visible curvature in their lane markings or boundaries\n"
-        "- Roads that follow a curved trajectory rather than being perfectly straight\n\n"
+        "- Roads that follow a curved trajectory rather than being perfectly straight\n"
+        "- Roads that deviate from a straight line in any direction\n"
+        "- Roads with any angular changes or directional variations\n"
+        "- Roads that are not perfectly linear or have any non-straight segments\n\n"
         "Important guidelines:\n"
-        "- Look for actual road intersections (cross roads) or curved road segments\n"
-        "- Consider both major and minor road intersections and curves\n"
+        "- Look for actual road intersections (cross roads), curved road segments, or any roads that are not straight\n"
+        "- Consider both major and minor road intersections, curves, bends, and directional changes\n"
         "- Ignore weather conditions, lighting, or seasonal changes\n"
         "- Focus on permanent road infrastructure and markings\n"
-        "- A single straight road without intersections or curves is NOT a cross road or curved road\n"
-        "- Both cross roads AND curved roads should result in 'YES'\n\n"
-        "Output ONLY one word: 'YES' if you detect any cross roads or curved roads, or 'NO' if you do not detect any cross roads or curved roads.\n"
+        "- A single perfectly straight road without intersections, curves, or directional changes should result in 'NO'\n"
+        "- Cross roads, curved roads, AND any non-straight roads should result in 'YES'\n"
+        "- Even slight curves, gentle bends, or minor directional changes should be considered as 'YES'\n\n"
+        "Output ONLY one word: 'YES' if you detect any cross roads, curved roads, or roads that are not straight, or 'NO' if all roads in the image are perfectly straight without intersections.\n"
         "Do not provide explanations, justifications, or additional text."
     )
 
@@ -104,7 +108,7 @@ def detect_cross_road(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": [
                 {"type": "image"},
-                {"type": "text", "text": "Analyze this image for cross roads or curved roads. Output only YES or NO."},
+                {"type": "text", "text": "Analyze this image for cross roads, curved roads, or any roads that are not straight. Output only YES or NO."},
             ]},
         ]
         
