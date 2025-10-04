@@ -17,7 +17,7 @@ from typing import List, Tuple, Dict, Any
 from PIL import Image, ImageDraw, ImageFont
 import torch
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
-from cross_road_detection import detect_cross_road
+# Removed cross road detection import
 
 # -------------------------
 # Configuration
@@ -112,6 +112,7 @@ def localize_camera_on_tile(
     model,
     cam_img: Image.Image,
     map_tile: Image.Image,
+    depth_img: Image.Image,
     *,
     samples: int = 3,
     temperature: float = 0.2,
@@ -121,10 +122,11 @@ def localize_camera_on_tile(
 ) -> Dict[str, Any]:
     prompt = (
         "You are a precise spatial localizer.\n"
-        "Task: Given a CAMERA image (ground) and a MAP_TILE image (aerial), predict where the camera view lies inside the MAP_TILE.\n"
-        "Note: The camera view must contain cross roads or curved roads. So, localize the camera position based on the cross roads or curved roads. Generate the bounding box based on the cross roads or curved roads.\n"
+        "Task: Given a STREET_VIEW image (ground level), a DEPTH image (depth information), and a MAP_TILE image (aerial view), predict where the camera view lies inside the MAP_TILE.\n"
+        "Use the depth information to better understand the 3D structure and spatial relationships in the street view.\n"
         "Rules:\n"
         "- Use persistent structures: roads, intersections, building footprints, plazas, fences/gates, sidewalks, crosswalks, permanent landmarks.\n"
+        "- Analyze depth information to understand distances and spatial layout.\n"
         "- Ignore weather, lighting, shadows, seasons.\n"
         "Output ONLY valid JSON with fields: {\n"
         "  \"bounding_box\": [x_min, y_min, x_max, y_max],\n"
@@ -146,13 +148,14 @@ def localize_camera_on_tile(
         chat = [
             {"role": "system", "content": "You output JSON only. Do not include explanations."},
             {"role": "user", "content": [
-                {"type": "image"},  # CAMERA
+                {"type": "image"},  # STREET_VIEW
+                {"type": "image"},  # DEPTH
                 {"type": "image"},  # MAP_TILE
                 {"type": "text", "text": prompt},
             ]},
         ]
         chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
-        inputs = processor(text=chat_str, images=[cam_img, map_tile], return_tensors="pt").to(model.device)
+        inputs = processor(text=chat_str, images=[cam_img, depth_img, map_tile], return_tensors="pt").to(model.device)
 
         gen_kwargs: Dict[str, Any] = {"max_new_tokens": max_new_tokens}
         if samples > 1 or temperature > 0:
@@ -294,7 +297,7 @@ def compute_global_point_from_candidate(candidate: Dict[str, Any]) -> Dict[str, 
 # Main Pipeline
 # -------------------------
 
-def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3, samples: int = 3, temperature: float = 0.2, top_p: float = 0.9, early_termination_threshold: float = 0.85, max_tiles: int = None, fast_mode: bool = False, max_image_size: int = None):
+def main(camera_path: str, map_path: str, depth_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3, samples: int = 3, temperature: float = 0.2, top_p: float = 0.9, early_termination_threshold: float = 0.85, max_tiles: int = None, fast_mode: bool = False, max_image_size: int = None):
     # Extract camera name from path for result naming
     camera_name = os.path.splitext(os.path.basename(camera_path))[0]
     start_time = time.time()
@@ -309,54 +312,9 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
 
     cam_img = load_image(camera_path, max_image_size)
     map_img = load_image(map_path, max_image_size)
+    depth_img = load_image(depth_path, max_image_size)
 
-    # Step 0: Check if camera view contains cross roads or curved roads
     if not json_only:
-        print("[Step 0] Checking camera view for cross roads or curved roads...")
-    
-    cross_road_detection_start = time.time()
-    cross_road_result = detect_cross_road(
-        processor,
-        model,
-        cam_img,
-        samples=1,  # Use single sample for faster detection
-        temperature=0.0,  # Deterministic
-        fast_mode=True,
-    )
-    cross_road_detection_time = time.time() - cross_road_detection_start
-    
-    if not json_only:
-        print(f"Cross road/curved road detection result: {cross_road_result}")
-        print(f"Detection time: {cross_road_detection_time:.2f}s")
-    
-    # Early exit if no cross roads or curved roads detected
-    if cross_road_result == "NO":
-        if not json_only:
-            print("❌ No cross roads or curved roads detected in camera view. Exiting...")
-        else:
-            # Return JSON response for early exit
-            total_time = time.time() - start_time
-            output = {
-                "success": False,
-                "reason": "no_cross_roads_or_curved_roads",
-                "cross_road_detection_result": cross_road_result,
-                "message": "No cross roads or curved roads detected in camera view",
-                "timing": {
-                    "model_load_time": round(model_load_time, 2),
-                    "cross_road_detection_time": round(cross_road_detection_time, 2),
-                    "total_time": round(total_time, 2)
-                },
-                "meta": {
-                    "model_id": MODEL_ID,
-                    "camera_path": camera_path,
-                    "map_path": map_path
-                }
-            }
-            print(json.dumps(output))
-        return
-    
-    if not json_only:
-        print("✅ Cross roads or curved roads detected. Proceeding with localization...")
         print("[Step 1] Splitting map into tiles and localizing camera on each tile...")
     tiles = split_into_tiles(map_img, tile_size=tile_size, stride=stride)
     if not json_only:
@@ -383,6 +341,7 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             model,
             cam_img,
             tile_img,
+            depth_img,
             samples=samples,
             temperature=temperature,
             top_p=top_p,
@@ -448,7 +407,6 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             "rank_score": point["rank_score"],
             "timing": {
                 "model_load_time": round(model_load_time, 2),
-                "cross_road_detection_time": round(cross_road_detection_time, 2),
                 "inference_time": round(inference_time, 2),
                 "total_time": round(total_time, 2),
                 "tiles_processed": total_tiles,
@@ -456,7 +414,6 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
             },
             "meta": {
                 "model_id": MODEL_ID,
-                "cross_road_detection_result": cross_road_result,
                 "tile_size": tile_size,
                 "stride": stride,
                 "samples": samples,
@@ -490,7 +447,7 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
 
     total_time = time.time() - start_time
     print(f"\n[Pipeline finished] — Total time: {total_time:.2f}s")
-    print(f"Model load: {model_load_time:.2f}s, Cross road detection: {cross_road_detection_time:.2f}s, Inference: {inference_time:.2f}s")
+    print(f"Model load: {model_load_time:.2f}s, Inference: {inference_time:.2f}s")
     print("Next step is fine geometric alignment with CV matcher (e.g., LoFTR).")
 
 # -------------------------
@@ -498,8 +455,9 @@ def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int 
 # -------------------------
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Camera-to-Map ROI Localization")
-    parser.add_argument("--camera", type=str, default="camera.jpg", help="Path to camera image")
+    parser.add_argument("--camera", type=str, default="camera.jpg", help="Path to street view image")
     parser.add_argument("--map", dest="map_path", type=str, default="map.jpg", help="Path to map image")
+    parser.add_argument("--depth", type=str, default="depth.jpg", help="Path to depth image")
     parser.add_argument("--tile-size", type=int, default=1024, help="Tile size for map tiling")
     parser.add_argument("--stride", type=int, default=512, help="Stride for map tiling")
     parser.add_argument("--json", dest="json_only", action="store_true", help="Output JSON with global (x,y) only")
@@ -521,6 +479,7 @@ if __name__ == "__main__":
     main(
         args.camera,
         args.map_path,
+        args.depth,
         tile_size=args.tile_size,
         stride=args.stride,
         json_only=args.json_only,
