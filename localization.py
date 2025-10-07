@@ -175,7 +175,7 @@ Coordinate constraints: 0 <= x < {map_width}, 0 <= y < {map_height}"""
         chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
         inputs = processor(
             text=chat_str, 
-            images=[camera_img, depth_img, map_img], 
+            images=[camera_img, map_img], 
             return_tensors="pt"
         ).to(model.device)
         
