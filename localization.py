@@ -492,12 +492,6 @@ if __name__ == "__main__":
         help="Path to map/aerial image"
     )
     parser.add_argument(
-        "--depth",
-        type=str,
-        required=True,
-        help="Path to depth map image"
-    )
-    parser.add_argument(
         "--samples",
         type=int,
         default=5,
@@ -535,7 +529,6 @@ if __name__ == "__main__":
     main(
         args.camera,
         args.map,
-        args.depth,
         num_samples=args.samples,
         temperature=args.temperature,
         max_image_size=args.max_size,
