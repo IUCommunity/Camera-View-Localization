@@ -64,8 +64,8 @@ def extract_json(response: str) -> dict:
 def detect_objects(processor, model, image: Image.Image) -> dict:
     """Detect objects in image and return bounding boxes"""
     
-    prompt = """Analyze this image and detect all objects. For each object, provide:
-1. Object class/name
+    prompt = """Analyze this image and detect all roads. For each road, provide:
+1. Road class/name
 2. Bounding box coordinates [x_min, y_min, x_max, y_max]
 3. Confidence score
 
@@ -73,19 +73,19 @@ Return ONLY valid JSON in this exact format:
 {
     "objects": [
         {
-            "class": "car",
+            "class": "road",
             "bbox": [100, 150, 300, 250],
             "confidence": 0.95
         },
         {
-            "class": "person", 
+            "class": "road", 
             "bbox": [50, 200, 120, 400],
             "confidence": 0.88
         }
     ]
 }
 
-Detect all visible objects including: vehicles, people, animals, buildings, signs, trees, etc.
+Detect all visible roads including.
 Use pixel coordinates where (0,0) is top-left corner."""
 
     chat = [
