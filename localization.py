@@ -225,7 +225,6 @@ NO explanations outside JSON. NO markdown. JUST the JSON object."""
                 # Try to convert confidence to float
                 if isinstance(conf_val, str):
                     # Try to extract a number from the string
-                    import re
                     numbers = re.findall(r'0?\.\d+|\d+\.?\d*', conf_val)
                     if numbers:
                         conf = float(numbers[0])
