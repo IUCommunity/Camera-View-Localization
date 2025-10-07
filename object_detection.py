@@ -64,9 +64,9 @@ def extract_json(response: str) -> dict:
 def detect_objects(processor, model, image: Image.Image) -> dict:
     """Detect objects in image and return bounding boxes"""
     
-    prompt = """Analyze this image and detect all roads. For each road, provide:
+    prompt = """Analyze this image and detect all visible roads, streets, and pathways. For each road segment, provide:
 1. Road class/name
-2. Bounding box coordinates [x_min, y_min, x_max, y_max]
+2. Bounding box coordinates [x_min, y_min, x_max, y_max] 
 3. Confidence score
 
 Return ONLY valid JSON in this exact format:
@@ -85,8 +85,13 @@ Return ONLY valid JSON in this exact format:
     ]
 }
 
-Detect all visible roads including.
-Use pixel coordinates where (0,0) is top-left corner."""
+Detect all visible road segments including:
+- Main streets and roads
+- Sidewalks and pathways  
+- Intersections and crosswalks
+- Any paved surfaces used for vehicles or pedestrians
+
+Use pixel coordinates where (0,0) is top-left corner. Draw bounding boxes around each distinct road segment."""
 
     chat = [
         {
@@ -224,11 +229,22 @@ def main(input_path: str, output_path: str = None):
     # Detect objects
     print("Detecting objects...")
     detections = detect_objects(processor, model, image)
-    print(f"Detected {len(detections.get('objects', []))} objects")
+    
+    # Handle different response formats
+    if isinstance(detections, dict):
+        objects = detections.get('objects', [])
+    elif isinstance(detections, list):
+        objects = detections
+    else:
+        objects = []
+    
+    print(f"Detected {len(objects)} objects")
     
     # Draw bounding boxes
     print("Drawing bounding boxes...")
-    result_image = draw_bounding_boxes(image, detections)
+    # Create a proper detections dict for the drawing function
+    detections_dict = {"objects": objects}
+    result_image = draw_bounding_boxes(image, detections_dict)
     
     # Save output
     if output_path is None:
