@@ -210,10 +210,37 @@ NO explanations outside JSON. NO markdown. JUST the JSON object."""
             try:
                 x = int(result["x"])
                 y = int(result["y"])
-                conf = float(result.get("confidence", 0.5))
-                reasoning = result.get("reasoning", "")
                 
-                # Clamp to valid range
+                # Handle swapped confidence/reasoning fields
+                conf_val = result.get("confidence", 0.5)
+                reasoning_val = result.get("reasoning", "")
+                
+                # Check if confidence and reasoning are swapped
+                if isinstance(conf_val, str) and not isinstance(reasoning_val, str):
+                    # Swap them
+                    conf_val, reasoning_val = reasoning_val, conf_val
+                    if DEBUG:
+                        print(f"  Sample {i+1}: Auto-corrected swapped confidence/reasoning fields")
+                
+                # Try to convert confidence to float
+                if isinstance(conf_val, str):
+                    # Try to extract a number from the string
+                    import re
+                    numbers = re.findall(r'0?\.\d+|\d+\.?\d*', conf_val)
+                    if numbers:
+                        conf = float(numbers[0])
+                        conf = max(0.0, min(1.0, conf))  # Clamp to [0, 1]
+                    else:
+                        if DEBUG:
+                            print(f"  Sample {i+1}: Could not extract confidence number, using 0.5")
+                        conf = 0.5
+                else:
+                    conf = float(conf_val)
+                    conf = max(0.0, min(1.0, conf))  # Clamp to [0, 1]
+                
+                reasoning = str(reasoning_val) if reasoning_val else ""
+                
+                # Clamp coordinates to valid range
                 x = max(0, min(x, map_width - 1))
                 y = max(0, min(y, map_height - 1))
                 
@@ -230,6 +257,7 @@ NO explanations outside JSON. NO markdown. JUST the JSON object."""
             except (ValueError, TypeError) as e:
                 if DEBUG:
                     print(f"  Sample {i+1}: Invalid format - {e}")
+                    print(f"  Raw result: {result}")
                 continue
     
     # Aggregate predictions
