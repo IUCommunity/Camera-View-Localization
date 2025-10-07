@@ -252,7 +252,11 @@ def main(input_path: str, output_path: str = None):
         output_path = f"{name}_detected{ext}"
     
     result_image.save(output_path)
+    
+    total_time = time.time() - total_start
     print(f"Output saved: {output_path}")
+    print(f"Total processing time: {total_time:.2f} seconds")
+    print(f"Breakdown: Model load: {model_time:.2f}s, Inference: {inference_time:.2f}s, Drawing: {total_time - model_time - inference_time:.2f}s")
     
     return output_path
 
