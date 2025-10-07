@@ -144,15 +144,21 @@ ANALYSIS APPROACH:
 
 4. Determine the camera's pixel coordinates on the map
 
-OUTPUT FORMAT (JSON only, no explanations):
+OUTPUT FORMAT - Return ONLY valid JSON with this EXACT structure:
 {{
-    "x": <integer pixel x-coordinate on map>,
-    "y": <integer pixel y-coordinate on map>,
-    "confidence": <float between 0 and 1>,
-    "reasoning": "<one sentence explaining the key matching features>"
+    "x": 512,
+    "y": 384,
+    "confidence": 0.85,
+    "reasoning": "T-junction with building on northeast corner matches map"
 }}
 
-Coordinate constraints: 0 <= x < {map_width}, 0 <= y < {map_height}"""
+CRITICAL REQUIREMENTS:
+- "x" must be an INTEGER between 0 and {map_width-1}
+- "y" must be an INTEGER between 0 and {map_height-1}
+- "confidence" must be a FLOAT/NUMBER between 0.0 and 1.0 (NOT text!)
+- "reasoning" is a short text string explaining the match
+
+NO explanations outside JSON. NO markdown. JUST the JSON object."""
 
     predictions = []
     
