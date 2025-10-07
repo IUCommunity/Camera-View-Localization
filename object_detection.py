@@ -209,10 +209,14 @@ def draw_bounding_boxes(image: Image.Image, detections: dict) -> Image.Image:
 def main(input_path: str, output_path: str = None):
     """Main function: input image -> output image with bounding boxes"""
     
+    total_start = time.time()
+    
     # Load model
     print("Loading model...")
+    model_start = time.time()
     processor, model = load_model()
-    print("Model loaded.")
+    model_time = time.time() - model_start
+    print(f"Model loaded in {model_time:.2f} seconds.")
     
     # Load input image
     print(f"Loading image: {input_path}")
@@ -221,7 +225,6 @@ def main(input_path: str, output_path: str = None):
     
     # Detect objects
     print("Detecting objects...")
-    import time
     inference_start = time.time()
     detections = detect_objects(processor, model, image)
     inference_time = time.time() - inference_start
