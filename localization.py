@@ -103,7 +103,6 @@ def localize_camera_position(
     model,
     camera_img: Image.Image,
     map_img: Image.Image,
-    depth_img: Image.Image,
     *,
     num_samples: int = 5,
     temperature: float = 0.3,
@@ -122,8 +121,7 @@ TASK: Determine the exact pixel position on the aerial MAP where the ground-leve
 
 INPUTS:
 1. CAMERA: Ground-level street view photograph
-2. DEPTH: Depth map showing distance information (darker = closer, brighter = farther)
-3. MAP: Aerial/satellite view (size: {map_width}x{map_height} pixels)
+2. MAP: Aerial/satellite view (size: {map_width}x{map_height} pixels)
 
 ANALYSIS APPROACH:
 1. Examine the CAMERA view and identify key structural features:
@@ -131,11 +129,13 @@ ANALYSIS APPROACH:
    - Building shapes, walls, fences, gates
    - Sidewalk patterns, crosswalks, road markings
    - Permanent landmarks (NOT temporary objects like cars/people)
+   - Viewing direction and perspective angles
 
-2. Use DEPTH information to understand:
-   - Distance to surrounding structures
-   - 3D spatial layout and geometry
-   - Which features are near vs far from camera
+2. Analyze spatial relationships:
+   - Relative positions of buildings and roads
+   - Intersection geometry and configuration
+   - Building footprint shapes and arrangements
+   - Distance cues from perspective (closer objects appear larger)
 
 3. Match these features to the MAP view:
    - Find the corresponding road intersection or segment
@@ -166,7 +166,6 @@ Coordinate constraints: 0 <= x < {map_width}, 0 <= y < {map_height}"""
                 "role": "user", 
                 "content": [
                     {"type": "image"},  # camera
-                    {"type": "image"},  # depth
                     {"type": "image"},  # map
                     {"type": "text", "text": prompt},
                 ]
