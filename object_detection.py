@@ -1,6 +1,3 @@
-# Simple Object Detection with Bounding Boxes
-# Takes an image as input and outputs an image with bounding boxes
-
 import os
 import json
 import re
@@ -64,34 +61,29 @@ def extract_json(response: str) -> dict:
 def detect_objects(processor, model, image: Image.Image) -> dict:
     """Detect objects in image and return bounding boxes"""
     
-    prompt = """Analyze this image and detect all visible roads, streets, and pathways. For each road segment, provide:
-1. Road class/name
-2. Bounding box coordinates [x_min, y_min, x_max, y_max] 
+    prompt = """Analyze this image and detect all objects. For each object, provide:
+1. Object class/name
+2. Bounding box coordinates [x_min, y_min, x_max, y_max]
 3. Confidence score
 
 Return ONLY valid JSON in this exact format:
 {
     "objects": [
         {
-            "class": "road",
+            "class": "car",
             "bbox": [100, 150, 300, 250],
             "confidence": 0.95
         },
         {
-            "class": "road", 
+            "class": "person", 
             "bbox": [50, 200, 120, 400],
             "confidence": 0.88
         }
     ]
 }
 
-Detect all visible road segments including:
-- Main streets and roads
-- Sidewalks and pathways  
-- Intersections and crosswalks
-- Any paved surfaces used for vehicles or pedestrians
-
-Use pixel coordinates where (0,0) is top-left corner. Draw bounding boxes around each distinct road segment."""
+Detect all visible objects including: vehicles, people, animals, buildings, signs, trees, etc.
+Use pixel coordinates where (0,0) is top-left corner."""
 
     chat = [
         {
