@@ -360,7 +360,6 @@ def visualize_position(
 def main(
     camera_path: str,
     map_path: str,
-    depth_path: str,
     *,
     num_samples: int = 5,
     temperature: float = 0.3,
@@ -392,11 +391,9 @@ def main(
         print("\n[2/4] Loading images...")
     camera_img = load_image(camera_path, max_image_size)
     map_img = load_image(map_path, max_image_size)
-    depth_img = load_image(depth_path, max_image_size)
     if not json_only:
         print(f"  ✓ Camera: {camera_img.size}")
         print(f"  ✓ Map: {map_img.size}")
-        print(f"  ✓ Depth: {depth_img.size}")
     
     # Localize
     if not json_only:
@@ -407,7 +404,6 @@ def main(
         model,
         camera_img,
         map_img,
-        depth_img,
         num_samples=num_samples,
         temperature=temperature,
     )
