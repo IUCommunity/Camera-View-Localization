@@ -2,6 +2,7 @@ import os
 import json
 import re
 import argparse
+import time
 from PIL import Image, ImageDraw, ImageFont
 import torch
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
@@ -220,7 +221,11 @@ def main(input_path: str, output_path: str = None):
     
     # Detect objects
     print("Detecting objects...")
+    import time
+    inference_start = time.time()
     detections = detect_objects(processor, model, image)
+    inference_time = time.time() - inference_start
+    print(f"Inference completed in {inference_time:.2f} seconds")
     
     # Handle different response formats
     if isinstance(detections, dict):
