@@ -16,7 +16,7 @@ from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 # -------------------------
 # Configuration
 # -------------------------
-MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
+MODEL_ID = r"D:\Research\LLaMA-Factory\models_export"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 OUTPUT_DIR = "results"
 DEBUG = True
