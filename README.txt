@@ -1,11 +1,14 @@
-For Maximum Speed (Testing)
-python main.py --camera view1.png --map map1.png --fast --max-tiles 5 --max-image-size 1024
+# Fast mode for quick results
+python localization.py --camera view1.png --map map1.png --mode fast
 
-For Balanced Speed/Quality (Production)
-python main.py --camera view1.png --map map1.png --early-termination 0.8 --samples 2
+# Balanced mode (default) - best overall performance
+python localization.py --camera view1.png --map map1.png --mode balanced
 
-For Large Maps (Quick Results)
-python main.py --camera view1.png --map map1.png --max-tiles 10 --stride 1024
+# High accuracy mode for critical applications
+python localization.py --camera view1.png --map map1.png --mode high_accuracy
 
-For High-Resolution Images
-python main.py --camera view1.png --map map1.png --max-image-size 2048 --fast
+# JSON output only for integration
+python localization.py --camera view1.png --map map1.png --mode fast --json
+
+# Custom parameters
+python localization.py --camera view1.png --map map1.png --mode balanced --samples 2 --max-size 512
