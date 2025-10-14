@@ -423,9 +423,13 @@ def localize_camera_position(
             if DEBUG:
                 print(f"  Sample {i+1}: Invalid prediction, skipping")
     
-    # Aggregate predictions
+    # Advanced aggregation with outlier detection and consensus validation
+    return aggregate_predictions_advanced(predictions, map_width, map_height)
+
+def aggregate_predictions_advanced(predictions: List[Dict[str, Any]], map_width: int, map_height: int) -> Dict[str, Any]:
+    """Advanced aggregation with outlier detection and consensus validation"""
+    
     if not predictions:
-        # Fallback to center
         return {
             "x": map_width // 2,
             "y": map_height // 2,
@@ -434,29 +438,51 @@ def localize_camera_position(
             "method": "fallback"
         }
     
-    # Use weighted average based on confidence
-    total_weight = sum(p["confidence"] for p in predictions)
-    if total_weight > 0:
-        avg_x = sum(p["x"] * p["confidence"] for p in predictions) / total_weight
-        avg_y = sum(p["y"] * p["confidence"] for p in predictions) / total_weight
-        avg_conf = sum(p["confidence"] for p in predictions) / len(predictions)
-    else:
-        # Unweighted average
-        avg_x = sum(p["x"] for p in predictions) / len(predictions)
-        avg_y = sum(p["y"] for p in predictions) / len(predictions)
-        avg_conf = 0.5
+    # Remove outliers using statistical methods
+    filtered_predictions = remove_outliers(predictions)
     
-    # Get best reasoning
-    best_pred = max(predictions, key=lambda p: p["confidence"])
+    if len(filtered_predictions) == 0:
+        filtered_predictions = predictions  # Fallback to original if all are outliers
+    
+    # Calculate consensus metrics
+    consensus_score = calculate_consensus(filtered_predictions)
+    
+    # Use weighted average with confidence and consensus
+    total_weight = 0
+    weighted_x = 0
+    weighted_y = 0
+    total_confidence = 0
+    
+    for pred in filtered_predictions:
+        # Weight combines confidence and consensus
+        weight = pred["confidence"] * (1 + consensus_score)
+        weighted_x += pred["x"] * weight
+        weighted_y += pred["y"] * weight
+        total_weight += weight
+        total_confidence += pred["confidence"]
+    
+    if total_weight > 0:
+        final_x = int(round(weighted_x / total_weight))
+        final_y = int(round(weighted_y / total_weight))
+        avg_confidence = total_confidence / len(filtered_predictions)
+    else:
+        # Fallback to simple average
+        final_x = int(round(sum(p["x"] for p in filtered_predictions) / len(filtered_predictions)))
+        final_y = int(round(sum(p["y"] for p in filtered_predictions) / len(filtered_predictions)))
+        avg_confidence = 0.5
+    
+    # Get best reasoning from highest confidence prediction
+    best_pred = max(filtered_predictions, key=lambda p: p["confidence"])
     
     return {
-        "x": int(round(avg_x)),
-        "y": int(round(avg_y)),
-        "confidence": float(avg_conf),
+        "x": final_x,
+        "y": final_y,
+        "confidence": float(avg_confidence),
         "reasoning": best_pred["reasoning"],
-        "method": "weighted_average",
-        "num_predictions": len(predictions),
-        "predictions": predictions  # Keep individual predictions for analysis
+        "method": "advanced_aggregation",
+        "num_predictions": len(filtered_predictions),
+        "consensus_score": consensus_score,
+        "predictions": filtered_predictions
     }
 
 # -------------------------
