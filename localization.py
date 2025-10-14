@@ -686,9 +686,10 @@ def main(
     camera_path: str,
     map_path: str,
     *,
-    num_samples: int = 5,
-    temperature: float = 0.3,
-    max_image_size: int = 2048,
+    mode: str = "balanced",  # "fast", "balanced", "high_accuracy"
+    num_samples: int = 3,
+    temperature: float = 0.1,
+    max_image_size: int = 1024,
     json_only: bool = False,
     no_viz: bool = False,
 ):
