@@ -817,9 +817,13 @@ def main(
         },
         "meta": {
             "model": MODEL_ID,
+            "mode": mode,
             "num_samples": num_samples,
             "temperature": temperature,
             "map_size": list(map_img.size),
+            "fast_mode": fast_mode,
+            "high_accuracy": high_accuracy,
+            "multi_scale": use_multi_scale,
         }
     }
     
