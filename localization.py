@@ -775,6 +775,10 @@ def main(
         print(f"  ✓ Position: ({result['x']}, {result['y']})")
         print(f"  ✓ Confidence: {result['confidence']:.2%}")
         print(f"  ✓ Reasoning: {result['reasoning']}")
+        if 'consensus_score' in result:
+            print(f"  ✓ Consensus: {result['consensus_score']:.2%}")
+        if 'num_scales' in result:
+            print(f"  ✓ Scales analyzed: {result['num_scales']}")
         print(f"  ✓ Inference time: {inference_time:.2f}s")
     
     # Visualize
