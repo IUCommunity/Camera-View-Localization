@@ -340,15 +340,17 @@ def localize_camera_position(
             return_tensors="pt"
         ).to(model.device)
         
-        # Generation parameters
+        # Optimized generation parameters
         gen_kwargs = {
-            "max_new_tokens": 300,
-            "do_sample": True if temperature > 0 else False,
+            "max_new_tokens": max_tokens,
+            "do_sample": not fast_mode,  # Deterministic in fast mode
         }
-        if temperature > 0:
+        if not fast_mode and temperature > 0:
             gen_kwargs.update({
                 "temperature": max(0.01, temperature),
-                "top_p": 0.95,
+                "top_p": 0.9,
+                "repetition_penalty": 1.1,  # Prevent repetition
+                "no_repeat_ngram_size": 3,   # Prevent n-gram repetition
             })
         
         with torch.no_grad():
