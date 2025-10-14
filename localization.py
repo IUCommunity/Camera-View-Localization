@@ -409,12 +409,19 @@ def localize_camera_position(
                 
                 if DEBUG:
                     print(f"  Sample {i+1}: x={x}, y={y}, conf={conf:.3f}")
+                
+                # Early stopping for fast mode or high confidence
+                if fast_mode or (not fast_mode and conf >= 0.9):
+                    break
                     
             except (ValueError, TypeError) as e:
                 if DEBUG:
                     print(f"  Sample {i+1}: Invalid format - {e}")
                     print(f"  Raw result: {result}")
                 continue
+        else:
+            if DEBUG:
+                print(f"  Sample {i+1}: Invalid prediction, skipping")
     
     # Aggregate predictions
     if not predictions:
