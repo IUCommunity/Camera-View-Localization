@@ -8,7 +8,7 @@ import json
 import re
 import argparse
 import time
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 from PIL import Image, ImageDraw, ImageFont
 import torch
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
