@@ -360,10 +360,10 @@ def localize_camera_position(
         result = extract_json(response)
         
         if DEBUG and i == 0:
-            print(f"Sample response: {response[-500:]}")
+            print(f"Sample response: {response[-200:] if fast_mode else response[-400:]}")
         
-        # Validate result
-        if isinstance(result, dict) and "x" in result and "y" in result:
+        # Validate result using new validation function
+        if validate_prediction(result, map_width, map_height):
             try:
                 x = int(result["x"])
                 y = int(result["y"])
