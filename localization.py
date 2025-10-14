@@ -28,15 +28,26 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 # -------------------------
 
 def load_model():
-    """Load the vision-language model"""
+    """Load the vision-language model with optimizations"""
     processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         MODEL_ID,
-        torch_dtype=torch.bfloat16,
+        torch_dtype=torch.float16,  # Use float16 for better compatibility and speed
         device_map="auto",
         trust_remote_code=True,
     )
     model.eval()
+    
+    # Enable optimizations if available
+    try:
+        # Use torch.compile for faster inference (PyTorch 2.0+)
+        model = torch.compile(model, mode="reduce-overhead")
+        if DEBUG:
+            print("  ✓ Model compiled for optimization")
+    except Exception as e:
+        if DEBUG:
+            print(f"  ⚠️ torch.compile not available: {e}")
+    
     return processor, model
 
 # -------------------------
