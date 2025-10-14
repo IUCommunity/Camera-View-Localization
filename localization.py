@@ -694,13 +694,33 @@ def main(
     no_viz: bool = False,
 ):
     """
-    Main localization pipeline
+    High-performance localization pipeline with multiple accuracy modes
     """
     camera_name = os.path.splitext(os.path.basename(camera_path))[0]
     
+    # Configure parameters based on mode
+    if mode == "fast":
+        fast_mode = True
+        high_accuracy = False
+        use_multi_scale = False
+        confidence_threshold = 0.7
+    elif mode == "balanced":
+        fast_mode = False
+        high_accuracy = False
+        use_multi_scale = False
+        confidence_threshold = 0.8
+    elif mode == "high_accuracy":
+        fast_mode = False
+        high_accuracy = True
+        use_multi_scale = True
+        confidence_threshold = 0.85
+        num_samples = max(2, num_samples)  # Minimum 2 for high accuracy
+    else:
+        raise ValueError(f"Unknown mode: {mode}. Use 'fast', 'balanced', or 'high_accuracy'")
+    
     if not json_only:
         print("=" * 60)
-        print("Single-Shot Camera Localization")
+        print(f"High-Performance Camera Localization - {mode.upper()} MODE")
         print("=" * 60)
     
     # Load model
