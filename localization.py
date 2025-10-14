@@ -862,22 +862,29 @@ if __name__ == "__main__":
         help="Path to map/aerial image"
     )
     parser.add_argument(
+        "--mode",
+        type=str,
+        default="balanced",
+        choices=["fast", "balanced", "high_accuracy"],
+        help="Localization mode: fast (1 sample, deterministic), balanced (3 samples, optimized), high_accuracy (multi-scale analysis)"
+    )
+    parser.add_argument(
         "--samples",
         type=int,
-        default=5,
-        help="Number of prediction samples (default: 5)"
+        default=3,
+        help="Number of prediction samples (default: 3)"
     )
     parser.add_argument(
         "--temperature",
         type=float,
-        default=0.3,
-        help="Sampling temperature (default: 0.3)"
+        default=0.1,
+        help="Sampling temperature (default: 0.1)"
     )
     parser.add_argument(
         "--max-size",
         type=int,
-        default=2048,
-        help="Max image dimension (default: 2048)"
+        default=1024,
+        help="Max image dimension (default: 1024)"
     )
     parser.add_argument(
         "--json",
@@ -899,6 +906,7 @@ if __name__ == "__main__":
     main(
         args.camera,
         args.map,
+        mode=args.mode,
         num_samples=args.samples,
         temperature=args.temperature,
         max_image_size=args.max_size,
