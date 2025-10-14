@@ -486,6 +486,108 @@ def aggregate_predictions_advanced(predictions: List[Dict[str, Any]], map_width:
     }
 
 # -------------------------
+# Multi-Scale Analysis Functions
+# -------------------------
+
+def multi_scale_localization(
+    processor,
+    model,
+    camera_img: Image.Image,
+    map_img: Image.Image,
+    *,
+    scales: List[float] = [0.75, 1.0, 1.25],
+    num_samples_per_scale: int = 2,
+    fast_mode: bool = False,
+) -> Dict[str, Any]:
+    """Analyze at multiple scales for improved accuracy"""
+    
+    map_width, map_height = map_img.size
+    scale_results = []
+    
+    for scale in scales:
+        if DEBUG:
+            print(f"  Analyzing at scale {scale}x...")
+        
+        # Scale the map image
+        if scale != 1.0:
+            new_width = int(map_width * scale)
+            new_height = int(map_height * scale)
+            scaled_map = map_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        else:
+            scaled_map = map_img
+        
+        # Localize on scaled image
+        result = localize_camera_position(
+            processor, model, camera_img, scaled_map,
+            num_samples=num_samples_per_scale,
+            temperature=0.05 if not fast_mode else 0.0,
+            fast_mode=fast_mode,
+            high_accuracy=not fast_mode
+        )
+        
+        # Scale coordinates back to original size
+        if scale != 1.0:
+            result['x'] = int(result['x'] / scale)
+            result['y'] = int(result['y'] / scale)
+        
+        # Add scale information
+        result['scale'] = scale
+        result['scale_confidence'] = result['confidence']
+        
+        scale_results.append(result)
+    
+    # Combine multi-scale results
+    return combine_multi_scale_results(scale_results, map_width, map_height)
+
+def combine_multi_scale_results(scale_results: List[Dict[str, Any]], map_width: int, map_height: int) -> Dict[str, Any]:
+    """Combine results from multiple scales"""
+    
+    if not scale_results:
+        return {
+            "x": map_width // 2,
+            "y": map_height // 2,
+            "confidence": 0.0,
+            "reasoning": "No multi-scale results",
+            "method": "fallback"
+        }
+    
+    # Weight by confidence and scale (prefer native scale)
+    weighted_x = 0
+    weighted_y = 0
+    total_weight = 0
+    
+    for result in scale_results:
+        # Weight combines confidence and scale preference
+        scale_weight = 1.0 if result['scale'] == 1.0 else 0.8
+        weight = result['confidence'] * scale_weight
+        
+        weighted_x += result['x'] * weight
+        weighted_y += result['y'] * weight
+        total_weight += weight
+    
+    if total_weight > 0:
+        final_x = int(round(weighted_x / total_weight))
+        final_y = int(round(weighted_y / total_weight))
+    else:
+        # Fallback to simple average
+        final_x = int(round(sum(r['x'] for r in scale_results) / len(scale_results)))
+        final_y = int(round(sum(r['y'] for r in scale_results) / len(scale_results)))
+    
+    # Get best reasoning from highest confidence result
+    best_result = max(scale_results, key=lambda r: r['confidence'])
+    avg_confidence = sum(r['confidence'] for r in scale_results) / len(scale_results)
+    
+    return {
+        "x": final_x,
+        "y": final_y,
+        "confidence": float(avg_confidence),
+        "reasoning": best_result['reasoning'],
+        "method": "multi_scale",
+        "scale_results": scale_results,
+        "num_scales": len(scale_results)
+    }
+
+# -------------------------
 # Visualization
 # -------------------------
 
