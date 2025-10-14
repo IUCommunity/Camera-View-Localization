@@ -106,6 +106,179 @@ def extract_json(resp: str) -> Dict[str, Any]:
             return {}
 
 # -------------------------
+# Advanced Prompting Functions
+# -------------------------
+
+def get_high_accuracy_prompt(map_width: int, map_height: int) -> str:
+    """Generate optimized prompt with few-shot examples for high accuracy"""
+    
+    return f"""You are an expert visual localization system with specialized training in matching street-level views to aerial maps.
+
+TASK: Find the exact pixel coordinates where the street-level camera was positioned when taking the photo.
+
+FEW-SHOT EXAMPLES:
+
+Example 1:
+Street View: Shows T-intersection with red building on left, straight road ahead
+Aerial Map: T-intersection visible, red building footprint matches
+Result: Camera at intersection center, coordinates (512, 384)
+Confidence: 0.92
+Reasoning: "T-intersection geometry and building color/shape match perfectly"
+
+Example 2:
+Street View: Curved road with trees on both sides, building visible ahead
+Aerial Map: Curved road segment with vegetation, building at end
+Result: Camera positioned along curved road, coordinates (678, 234)
+Confidence: 0.87
+Reasoning: "Road curvature and vegetation pattern match, building placement consistent"
+
+ANALYSIS METHODOLOGY:
+1. **Landmark Matching**: Identify distinctive buildings, intersections, or structures
+2. **Road Geometry**: Match road curves, intersections, and lane configurations  
+3. **Spatial Relationships**: Verify relative positions of buildings, roads, and features
+4. **Scale Estimation**: Use known objects to estimate camera position accuracy
+5. **Perspective Validation**: Ensure viewing angle matches aerial perspective
+
+CRITICAL REQUIREMENTS:
+- Examine the camera image for permanent landmarks (buildings, roads, intersections)
+- Match these landmarks to corresponding features in the aerial map
+- Consider the camera's viewing direction and field of view
+- Account for scale differences between street view and aerial view
+- Ignore temporary objects (cars, people, shadows, weather)
+
+OUTPUT FORMAT - Return ONLY valid JSON:
+{{
+    "x": <integer_pixel_x>,
+    "y": <integer_pixel_y>,
+    "confidence": <float_0_to_1>,
+    "reasoning": "<detailed_explanation_of_match>",
+    "landmarks": ["<landmark1>", "<landmark2>"],
+    "viewing_direction": "<north|south|east|west|northeast|northwest|southeast|southwest>"
+}}
+
+COORDINATE CONSTRAINTS:
+- x must be integer between 0 and {map_width-1}
+- y must be integer between 0 and {map_height-1}
+- confidence must be float between 0.0 and 1.0
+
+NO explanations outside JSON. NO markdown formatting."""
+
+def get_fast_mode_prompt(map_width: int, map_height: int) -> str:
+    """Generate optimized prompt for fast mode"""
+    
+    return f"""You are a precise visual localization system. Find the camera position on the aerial map.
+
+TASK: Determine the exact pixel coordinates where the street-level camera was located.
+
+ANALYSIS:
+1. Identify key landmarks in the street view (buildings, intersections, roads)
+2. Match these to corresponding features in the aerial map
+3. Determine camera position coordinates
+
+OUTPUT FORMAT - Return ONLY valid JSON:
+{{
+    "x": <integer_pixel_x>,
+    "y": <integer_pixel_y>,
+    "confidence": <float_0_to_1>,
+    "reasoning": "<brief_explanation>"
+}}
+
+Coordinates: x=[0,{map_width-1}], y=[0,{map_height-1}]. Confidence: [0.0,1.0]"""
+
+# -------------------------
+# Validation Functions
+# -------------------------
+
+def validate_prediction(result: Dict[str, Any], map_width: int, map_height: int) -> bool:
+    """Validate prediction quality and format"""
+    
+    if not isinstance(result, dict):
+        return False
+    
+    # Check required fields
+    required_fields = ["x", "y", "confidence", "reasoning"]
+    if not all(field in result for field in required_fields):
+        return False
+    
+    try:
+        x = int(result["x"])
+        y = int(result["y"])
+        confidence = float(result["confidence"])
+        reasoning = str(result["reasoning"])
+        
+        # Validate coordinate bounds
+        if not (0 <= x < map_width and 0 <= y < map_height):
+            return False
+        
+        # Validate confidence range
+        if not (0.0 <= confidence <= 1.0):
+            return False
+        
+        # Validate reasoning quality (should be descriptive)
+        if len(reasoning.strip()) < 5:
+            return False
+            
+        return True
+        
+    except (ValueError, TypeError):
+        return False
+
+def remove_outliers(predictions: List[Dict[str, Any]], threshold: float = 2.0) -> List[Dict[str, Any]]:
+    """Remove statistical outliers from predictions"""
+    
+    if len(predictions) < 3:
+        return predictions
+    
+    x_coords = [p["x"] for p in predictions]
+    y_coords = [p["y"] for p in predictions]
+    
+    # Calculate mean and standard deviation
+    x_mean = sum(x_coords) / len(x_coords)
+    y_mean = sum(y_coords) / len(y_coords)
+    x_std = (sum((x - x_mean) ** 2 for x in x_coords) / len(x_coords)) ** 0.5
+    y_std = (sum((y - y_mean) ** 2 for y in y_coords) / len(y_coords)) ** 0.5
+    
+    # Filter outliers
+    filtered = []
+    for pred in predictions:
+        x_z_score = abs(pred["x"] - x_mean) / (x_std + 1e-8)
+        y_z_score = abs(pred["y"] - y_mean) / (y_std + 1e-8)
+        
+        if x_z_score < threshold and y_z_score < threshold:
+            filtered.append(pred)
+    
+    return filtered
+
+def calculate_consensus(predictions: List[Dict[str, Any]]) -> float:
+    """Calculate how well predictions agree with each other"""
+    
+    if len(predictions) < 2:
+        return 1.0
+    
+    x_coords = [p["x"] for p in predictions]
+    y_coords = [p["y"] for p in predictions]
+    
+    # Calculate average pairwise distance
+    total_distance = 0
+    count = 0
+    
+    for i in range(len(predictions)):
+        for j in range(i + 1, len(predictions)):
+            distance = ((x_coords[i] - x_coords[j]) ** 2 + (y_coords[i] - y_coords[j]) ** 2) ** 0.5
+            total_distance += distance
+            count += 1
+    
+    if count == 0:
+        return 1.0
+    
+    avg_distance = total_distance / count
+    
+    # Convert distance to consensus score (0-1, higher is better)
+    # Assume good consensus if average distance < 50 pixels
+    consensus = max(0.0, 1.0 - (avg_distance / 50.0))
+    return consensus
+
+# -------------------------
 # Core Localization Function
 # -------------------------
 
@@ -115,61 +288,32 @@ def localize_camera_position(
     camera_img: Image.Image,
     map_img: Image.Image,
     *,
-    num_samples: int = 5,
-    temperature: float = 0.3,
+    num_samples: int = 3,
+    temperature: float = 0.1,
+    fast_mode: bool = False,
+    high_accuracy: bool = False,
 ) -> Dict[str, Any]:
     """
     Directly predict camera position as (x, y) pixel coordinates on the map.
-    Uses multiple samples and voting/averaging for robustness.
+    Uses multiple samples and advanced aggregation for robustness.
     """
     
     map_width, map_height = map_img.size
     
-    # Improved prompt for direct position prediction
-    prompt = f"""You are an expert at visual localization and spatial reasoning.
-
-TASK: Determine the exact pixel position on the aerial MAP where the ground-level CAMERA was located when the photo was taken.
-
-INPUTS:
-1. CAMERA: Ground-level street view photograph
-2. MAP: Aerial/satellite view (size: {map_width}x{map_height} pixels)
-
-ANALYSIS APPROACH:
-1. Examine the CAMERA view and identify key structural features:
-   - Road layout, intersections, T-junctions, crossroads
-   - Building shapes, walls, fences, gates
-   - Sidewalk patterns, crosswalks, road markings
-   - Permanent landmarks (NOT temporary objects like cars/people)
-   - Viewing direction and perspective angles
-
-2. Analyze spatial relationships:
-   - Relative positions of buildings and roads
-   - Intersection geometry and configuration
-   - Building footprint shapes and arrangements
-   - Distance cues from perspective (closer objects appear larger)
-
-3. Match these features to the MAP view:
-   - Find the corresponding road intersection or segment
-   - Identify matching building footprints and boundaries
-   - Consider the viewing angle and perspective
-
-4. Determine the camera's pixel coordinates on the map
-
-OUTPUT FORMAT - Return ONLY valid JSON with this EXACT structure:
-{{
-    "x": 512,
-    "y": 384,
-    "confidence": 0.85,
-    "reasoning": "T-junction with building on northeast corner matches map"
-}}
-
-CRITICAL REQUIREMENTS:
-- "x" must be an INTEGER between 0 and {map_width-1}
-- "y" must be an INTEGER between 0 and {map_height-1}
-- "confidence" must be a FLOAT/NUMBER between 0.0 and 1.0 (NOT text!)
-- "reasoning" is a short text string explaining the match
-
-NO explanations outside JSON. NO markdown. JUST the JSON object."""
+    # Optimize parameters based on mode
+    if fast_mode:
+        num_samples = 1
+        temperature = 0.0
+        max_tokens = 100
+        prompt = get_fast_mode_prompt(map_width, map_height)
+    elif high_accuracy:
+        num_samples = max(2, num_samples)  # Minimum 2 for high accuracy
+        temperature = 0.05
+        max_tokens = 250
+        prompt = get_high_accuracy_prompt(map_width, map_height)
+    else:
+        max_tokens = 200
+        prompt = get_fast_mode_prompt(map_width, map_height)  # Use optimized prompt
 
     predictions = []
     
