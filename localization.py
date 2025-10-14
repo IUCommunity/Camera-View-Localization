@@ -741,18 +741,34 @@ def main(
         print(f"  ✓ Camera: {camera_img.size}")
         print(f"  ✓ Map: {map_img.size}")
     
-    # Localize
+    # Perform localization
     if not json_only:
-        print(f"\n[3/4] Localizing camera position ({num_samples} samples)...")
+        if use_multi_scale:
+            print(f"\n[3/4] Multi-scale localization ({num_samples} samples per scale)...")
+        else:
+            mode_str = "FAST MODE" if fast_mode else f"STANDARD MODE ({num_samples} samples)"
+            print(f"\n[3/4] Localizing camera position - {mode_str}...")
+    
     inference_start = time.time()
-    result = localize_camera_position(
-        processor,
-        model,
-        camera_img,
-        map_img,
-        num_samples=num_samples,
-        temperature=temperature,
-    )
+    
+    if use_multi_scale:
+        result = multi_scale_localization(
+            processor, model, camera_img, map_img,
+            num_samples_per_scale=num_samples,
+            fast_mode=fast_mode
+        )
+    else:
+        result = localize_camera_position(
+            processor,
+            model,
+            camera_img,
+            map_img,
+            num_samples=num_samples,
+            temperature=temperature,
+            fast_mode=fast_mode,
+            high_accuracy=high_accuracy,
+        )
+    
     inference_time = time.time() - inference_start
     
     if not json_only:
