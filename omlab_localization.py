@@ -8,7 +8,7 @@ import os
 import json
 import argparse
 import time
-from typing import Dict, Any, Tuple, Optional
+from typing import Dict, Any, Tuple, Optional, List
 import re
 from PIL import Image, ImageDraw, ImageFont
 import torch
@@ -61,8 +61,11 @@ def simple_localize(processor, model, camera_img: Image.Image, map_img: Image.Im
     # Minimal, explicit prompt (no examples/ranges)
     prompt = (
         f"Map size: {map_width}x{map_height} pixels. "
-        "Given the street-view (first image) and the aerial map (second image), "
+        "Given the street-view panorama image (first image) and the aerial map image (second image), "
         "return ONLY a JSON object with: x (integer pixel), y (integer pixel), confidence (0 to 1), reason (short)."
+        "Example output:"
+        '{"x": 123, "y": 456, "confidence": 0.93, "reason": "Distinct buildings and roads matched precisely."}'
+        "No other text or explanations."
     )
 
     chat = [
@@ -312,6 +315,204 @@ def extract_coordinates(text: str, map_width: int, map_height: int) -> Dict[str,
         "error": "Could not extract coordinates from response",
     }
 
+# =========================
+# Advanced pipeline (mirrors localization.py logic)
+# =========================
+
+def extract_json(resp: str) -> Dict[str, Any]:
+    """Extract JSON from model response with robust parsing (reasoning-friendly)."""
+    try:
+        # Strip any assistant/system echoes
+        lower = resp.lower()
+        if "assistant" in lower:
+            parts = resp.split("assistant", 1)
+            if len(parts) > 1:
+                resp = parts[-1]
+        # Prefer fenced blocks
+        matches = re.findall(r"```(?:json)?\s*(.*?)```", resp, re.DOTALL | re.IGNORECASE)
+        if matches:
+            candidate = matches[-1].strip()
+        else:
+            matches = re.findall(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\}", resp, re.DOTALL)
+            if not matches:
+                return {}
+            candidate = matches[-1]
+        return json.loads(candidate)
+    except Exception:
+        # Attempt simple repairs
+        try:
+            candidate = candidate.strip()
+            if candidate.endswith(","):
+                candidate = candidate[:-1]
+            open_b = candidate.count("{")
+            close_b = candidate.count("}")
+            if open_b > close_b:
+                candidate += "}" * (open_b - close_b)
+            return json.loads(candidate)
+        except Exception:
+            return {}
+
+def get_fast_mode_prompt(map_width: int, map_height: int) -> str:
+    return (
+        "You are a precise visual localization system. Find the camera position on the aerial map.\n\n"
+        "TASK: Determine the exact pixel coordinates where the street-level camera was located.\n\n"
+        "ANALYSIS:\n"
+        "1. Identify key landmarks in the street view (buildings, intersections, roads)\n"
+        "2. Match these to corresponding features in the aerial map\n"
+        "3. Determine camera position coordinates\n\n"
+        "OUTPUT FORMAT - Return ONLY valid JSON:\n"
+        '{"x": <integer_pixel_x>, "y": <integer_pixel_y>, "confidence": <float_0_to_1>, "reasoning": "<brief_explanation>"}'
+        f"\n\nCoordinates: x=[0,{map_width-1}], y=[0,{map_height-1}]. Confidence: [0.0,1.0]"
+    )
+
+def validate_prediction(result: Dict[str, Any], map_width: int, map_height: int) -> bool:
+    if not isinstance(result, dict):
+        return False
+    required = ["x", "y", "confidence", "reasoning"]
+    if not all(k in result for k in required):
+        return False
+    try:
+        x = int(result["x"])
+        y = int(result["y"])
+        conf = float(result["confidence"])
+        reasoning = str(result["reasoning"]).strip()
+        if not (0 <= x < map_width and 0 <= y < map_height):
+            return False
+        if not (0.0 <= conf <= 1.0):
+            return False
+        if len(reasoning) < 5:
+            return False
+        return True
+    except Exception:
+        return False
+
+def remove_outliers(predictions: List[Dict[str, Any]], threshold: float = 2.0) -> List[Dict[str, Any]]:
+    if len(predictions) < 3:
+        return predictions
+    xs = [p["x"] for p in predictions]
+    ys = [p["y"] for p in predictions]
+    x_mean = sum(xs) / len(xs)
+    y_mean = sum(ys) / len(ys)
+    x_std = (sum((x - x_mean) ** 2 for x in xs) / len(xs)) ** 0.5
+    y_std = (sum((y - y_mean) ** 2 for y in ys) / len(ys)) ** 0.5
+    filtered: List[Dict[str, Any]] = []
+    for p in predictions:
+        x_z = abs(p["x"] - x_mean) / (x_std + 1e-8)
+        y_z = abs(p["y"] - y_mean) / (y_std + 1e-8)
+        if x_z < threshold and y_z < threshold:
+            filtered.append(p)
+    return filtered
+
+def calculate_consensus(predictions: List[Dict[str, Any]]) -> float:
+    if len(predictions) < 2:
+        return 1.0
+    total = 0.0
+    count = 0
+    for i in range(len(predictions)):
+        for j in range(i + 1, len(predictions)):
+            dx = predictions[i]["x"] - predictions[j]["x"]
+            dy = predictions[i]["y"] - predictions[j]["y"]
+            total += (dx * dx + dy * dy) ** 0.5
+            count += 1
+    if count == 0:
+        return 1.0
+    avg = total / count
+    return max(0.0, 1.0 - (avg / 50.0))
+
+def localize_camera_position(
+    processor,
+    model,
+    camera_img: Image.Image,
+    map_img: Image.Image,
+    *,
+    num_samples: int = 3,
+    fast_mode: bool = False,
+) -> Dict[str, Any]:
+    """Multiple samples + aggregation, avoiding unsupported sampling flags for this model."""
+    map_width, map_height = map_img.size
+    prompt = get_fast_mode_prompt(map_width, map_height)
+    max_tokens = 160
+    predictions: List[Dict[str, Any]] = []
+
+    for i in range(max(1, num_samples)):
+        chat = [
+            {"role": "system", "content": "You are a precise visual localization system. Output only valid JSON."},
+            {"role": "user", "content": [
+                {"type": "image"},
+                {"type": "image"},
+                {"type": "text", "text": prompt},
+            ]},
+        ]
+        chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
+        inputs = processor(text=chat_str, images=[camera_img, map_img], return_tensors="pt").to(model.device)
+        with torch.no_grad():
+            out = model.generate(
+                **inputs,
+                max_new_tokens=max_tokens,
+                do_sample=False,  # Avoid unsupported flags for this model
+                pad_token_id=processor.tokenizer.eos_token_id,
+                eos_token_id=processor.tokenizer.eos_token_id,
+            )
+        # Decode only newly generated tokens
+        prompt_len = inputs["input_ids"].shape[-1]
+        cont = out[0][prompt_len:]
+        resp = processor.decode(cont, skip_special_tokens=True)
+        obj = extract_json(resp)
+        if validate_prediction(obj, map_width, map_height):
+            try:
+                x = max(0, min(int(obj["x"]), map_width - 1))
+                y = max(0, min(int(obj["y"]), map_height - 1))
+                conf = float(obj.get("confidence", 0.5))
+                conf = max(0.0, min(conf, 1.0))
+                reasoning = str(obj.get("reasoning", obj.get("reason", "")))
+                predictions.append({"x": x, "y": y, "confidence": conf, "reasoning": reasoning})
+            except Exception:
+                continue
+        else:
+            continue
+
+        if fast_mode:
+            break
+
+    return aggregate_predictions_advanced(predictions, map_width, map_height)
+
+def aggregate_predictions_advanced(predictions: List[Dict[str, Any]], map_width: int, map_height: int) -> Dict[str, Any]:
+    if not predictions:
+        return {"x": map_width // 2, "y": map_height // 2, "confidence": 0.0, "reasoning": "No valid predictions", "method": "fallback", "num_predictions": 0}
+    filtered = remove_outliers(predictions)
+    if not filtered:
+        filtered = predictions
+    consensus = calculate_consensus(filtered)
+    total_weight = 0.0
+    wx = 0.0
+    wy = 0.0
+    total_conf = 0.0
+    for p in filtered:
+        w = p["confidence"] * (1.0 + consensus)
+        wx += p["x"] * w
+        wy += p["y"] * w
+        total_weight += w
+        total_conf += p["confidence"]
+    if total_weight > 0:
+        fx = int(round(wx / total_weight))
+        fy = int(round(wy / total_weight))
+        avg_conf = total_conf / len(filtered)
+    else:
+        fx = int(round(sum(p["x"] for p in filtered) / len(filtered)))
+        fy = int(round(sum(p["y"] for p in filtered) / len(filtered)))
+        avg_conf = 0.5
+    best = max(filtered, key=lambda p: p["confidence"])
+    return {
+        "x": fx,
+        "y": fy,
+        "confidence": float(avg_conf),
+        "reasoning": best.get("reasoning", ""),
+        "method": "advanced_aggregation",
+        "num_predictions": len(filtered),
+        "consensus_score": consensus,
+        "predictions": filtered,
+    }
+
 def visualize_result(map_img: Image.Image, result: Dict[str, Any], camera_name: str) -> str:
     """Create simple visualization"""
     
@@ -374,6 +575,10 @@ def main():
     parser.add_argument("--max-size", type=int, default=0, help="(ignored) no resizing is applied")
     parser.add_argument("--no-viz", action="store_true", help="Skip visualization")
     parser.add_argument("--safe", action="store_true", help="Use safe dtype (float32) to avoid CUDA asserts")
+    # Advanced options (compatible with localization.py)
+    parser.add_argument("--mode", type=str, default="balanced", choices=["fast", "balanced"], help="Pipeline mode")
+    parser.add_argument("--samples", type=int, default=3, help="Number of samples for aggregation")
+    parser.add_argument("--json", dest="json_only", action="store_true", help="Print JSON only")
     
     args = parser.parse_args()
     
@@ -394,10 +599,11 @@ def main():
     print(f"Camera image: {camera_img.size}")
     print(f"Map image: {map_img.size}")
     
-    # Localize
+    # Localize (advanced pipeline)
     print(f"\nPerforming localization...")
     start_time = time.time()
-    result = simple_localize(processor, model, camera_img, map_img)
+    fast_mode = args.mode == "fast"
+    result = localize_camera_position(processor, model, camera_img, map_img, num_samples=args.samples, fast_mode=fast_mode)
     inference_time = time.time() - start_time
 
     # Auto-retry with safe dtype on CUDA assert
@@ -416,14 +622,15 @@ def main():
         processor, model = load_model(use_safe_dtype=True)
         model_time += time.time() - safe_start
         retry_start = time.time()
-        result = simple_localize(processor, model, camera_img, map_img)
+        result = localize_camera_position(processor, model, camera_img, map_img, num_samples=args.samples, fast_mode=fast_mode)
         inference_time = time.time() - retry_start
     
     print(f"Localization time: {inference_time:.2f}s")
     print(f"\nResult:")
     print(f"Position: ({result['x']}, {result['y']})")
     print(f"Confidence: {result['confidence']:.3f}")
-    print(f"Reason: {result['reason']}")
+    if 'reasoning' in result:
+        print(f"Reasoning: {result['reasoning']}")
     
     # Visualize
     if not args.no_viz:
@@ -435,13 +642,25 @@ def main():
     success = "error" not in result
     output = {
         "success": success,
-        "position": {"x": result["x"], "y": result["y"]},
-        "confidence": result["confidence"],
-        "reason": result["reason"],
+        "position": {"x": result.get("x", 0), "y": result.get("y", 0)},
+        "confidence": result.get("confidence", 0.0),
+        "reasoning": result.get("reasoning", result.get("reason", "")),
+        "method": result.get("method", "advanced_aggregation" if success else "fallback"),
+        "num_predictions": result.get("num_predictions", 1),
         "timing": {
             "model_load": round(model_time, 2),
             "inference": round(inference_time, 2),
             "total": round(model_time + inference_time, 2)
+        },
+        "meta": {
+            "model": MODEL_ID,
+            "mode": args.mode,
+            "num_samples": args.samples,
+            "temperature": 0.0,
+            "map_size": list(map_img.size),
+            "fast_mode": fast_mode,
+            "high_accuracy": False,
+            "multi_scale": False,
         }
     }
     if not success and "error" in result:
