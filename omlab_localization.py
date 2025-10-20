@@ -72,7 +72,7 @@ Map dimensions: {map_width} x {map_height} pixels
 Valid coordinates: x=0 to {map_width-1}, y=0 to {map_height-1}
 
 Return ONLY valid JSON with these keys and types:
-{"x": <integer>, "y": <integer>, "confidence": <float 0..1>, "reason": "<short explanation>"}
+{{"x": <integer>, "y": <integer>, "confidence": <float 0..1>, "reason": "<short explanation>"}}
 
 Output only the JSON object and nothing else."""
 
