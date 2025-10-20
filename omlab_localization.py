@@ -51,16 +51,21 @@ def simple_localize(processor, model, camera_img: Image.Image, map_img: Image.Im
     """
     map_width, map_height = map_img.size
     
-    # Simple, direct prompt
-    prompt = f"""Find the camera position on this aerial map. The camera took a street-level photo. 
-    
-Look at the street view image and match it to features in the aerial map.
-Return the pixel coordinates where the camera was positioned.
+    # Simple, direct prompt with clearer instructions
+    prompt = f"""Analyze the street view image and find where the camera was positioned on the aerial map.
 
-Map size: {map_width} x {map_height} pixels
-Return format: {{"x": pixel_x, "y": pixel_y, "confidence": 0.0-1.0, "reason": "explanation"}}
+Instructions:
+1. Look at the street view (first image) - identify buildings, roads, intersections
+2. Find matching features in the aerial map (second image)
+3. Determine the camera position coordinates
 
-Coordinates must be between 0 and {map_width-1} for x, and 0 and {map_height-1} for y."""
+Map dimensions: {map_width} x {map_height} pixels
+Valid coordinates: x=0 to {map_width-1}, y=0 to {map_height-1}
+
+Return your answer in this EXACT format:
+{{"x": 123, "y": 456, "confidence": 0.85, "reason": "Intersection at main street"}}
+
+Do not include any other text, just the JSON."""
 
     chat = [
         {
@@ -91,18 +96,28 @@ Coordinates must be between 0 and {map_width-1} for x, and 0 and {map_height-1} 
         with torch.no_grad():
             output = model.generate(
                 **inputs,
-                max_new_tokens=150,  # Limit tokens to prevent infinite generation
-                do_sample=False,     # Deterministic generation
-                temperature=0.1,     # Low temperature for consistency
+                max_new_tokens=200,  # Increased for better JSON responses
+                do_sample=True,      # Allow some sampling for better responses
+                temperature=0.3,     # Slightly higher for variety
+                top_p=0.9,          # Nucleus sampling
                 pad_token_id=processor.tokenizer.eos_token_id,
                 eos_token_id=processor.tokenizer.eos_token_id,
+                repetition_penalty=1.1,  # Prevent repetition
             )
         
         response = processor.decode(output[0], skip_special_tokens=True)
         print(f"Raw response: {response}")
         
+        # Clean response - remove the input part if present
+        if "user" in response.lower():
+            # Split on user content and take the last part
+            parts = response.split("user", 1)
+            if len(parts) > 1:
+                response = parts[-1]
+        
         # Extract JSON from response
         result = extract_coordinates(response, map_width, map_height)
+        print(f"Extracted result: {result}")
         return result
         
     except Exception as e:
@@ -117,48 +132,84 @@ Coordinates must be between 0 and {map_width-1} for x, and 0 and {map_height-1} 
 def extract_coordinates(text: str, map_width: int, map_height: int) -> Dict[str, Any]:
     """Extract coordinates from model response"""
     
-    # Try to find JSON in the response
     import re
     
-    # Look for JSON pattern
-    json_pattern = r'\{[^{}]*"x"[^{}]*"y"[^{}]*\}'
-    matches = re.findall(json_pattern, text, re.IGNORECASE)
+    print(f"Extracting from text: {text[:200]}...")  # Debug output
     
-    if matches:
-        try:
-            result = json.loads(matches[0])
-            
-            # Validate and clamp coordinates
-            x = max(0, min(int(result.get("x", map_width // 2)), map_width - 1))
-            y = max(0, min(int(result.get("y", map_height // 2)), map_height - 1))
-            confidence = max(0.0, min(float(result.get("confidence", 0.5)), 1.0))
-            reason = str(result.get("reason", result.get("reasoning", "No explanation provided")))
-            
-            return {
-                "x": x,
-                "y": y,
-                "confidence": confidence,
-                "reason": reason
-            }
-        except:
-            pass
+    # Method 1: Try to find JSON with more flexible pattern
+    json_patterns = [
+        r'\{[^{}]*"x"[^{}]*"y"[^{}]*\}',  # Original pattern
+        r'\{[^}]*"x"[^}]*"y"[^}]*\}',     # Simpler pattern
+        r'\{"x":\s*\d+[^}]*"y":\s*\d+[^}]*\}',  # More specific
+    ]
     
-    # Fallback: try to extract numbers from text
+    for pattern in json_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE | re.DOTALL)
+        if matches:
+            for match in matches:
+                try:
+                    print(f"Trying to parse JSON: {match}")  # Debug output
+                    result = json.loads(match)
+                    
+                    # Validate and clamp coordinates
+                    x = max(0, min(int(result.get("x", map_width // 2)), map_width - 1))
+                    y = max(0, min(int(result.get("y", map_height // 2)), map_height - 1))
+                    confidence = max(0.0, min(float(result.get("confidence", 0.5)), 1.0))
+                    reason = str(result.get("reason", result.get("reasoning", "No explanation provided")))
+                    
+                    print(f"Successfully parsed JSON: x={x}, y={y}, conf={confidence}")  # Debug output
+                    return {
+                        "x": x,
+                        "y": y,
+                        "confidence": confidence,
+                        "reason": reason
+                    }
+                except Exception as e:
+                    print(f"JSON parsing failed: {e}")  # Debug output
+                    continue
+    
+    # Method 2: Try to find coordinates in various formats
+    coord_patterns = [
+        r'x[:\s=]*(\d+)[,\s]*y[:\s=]*(\d+)',  # x:123, y:456
+        r'\((\d+),\s*(\d+)\)',                # (123, 456)
+        r'(\d+),\s*(\d+)',                    # 123, 456
+        r'position[:\s]*(\d+)[,\s]*(\d+)',    # position: 123, 456
+    ]
+    
+    for pattern in coord_patterns:
+        matches = re.findall(pattern, text, re.IGNORECASE)
+        if matches:
+            try:
+                x = max(0, min(int(matches[0][0]), map_width - 1))
+                y = max(0, min(int(matches[0][1]), map_height - 1))
+                print(f"Extracted coordinates from pattern: x={x}, y={y}")  # Debug output
+                return {
+                    "x": x,
+                    "y": y,
+                    "confidence": 0.4,
+                    "reason": "Extracted from coordinate pattern"
+                }
+            except:
+                continue
+    
+    # Method 3: Try to extract any two numbers
     numbers = re.findall(r'\d+', text)
     if len(numbers) >= 2:
         try:
             x = max(0, min(int(numbers[0]), map_width - 1))
             y = max(0, min(int(numbers[1]), map_height - 1))
+            print(f"Extracted first two numbers: x={x}, y={y}")  # Debug output
             return {
                 "x": x,
                 "y": y,
-                "confidence": 0.3,
-                "reason": "Extracted from text (low confidence)"
+                "confidence": 0.2,
+                "reason": "Extracted from numbers (very low confidence)"
             }
         except:
             pass
     
     # Final fallback
+    print("Using fallback coordinates")  # Debug output
     return {
         "x": map_width // 2,
         "y": map_height // 2,
