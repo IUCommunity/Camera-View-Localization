@@ -9,6 +9,7 @@ import json
 import argparse
 import time
 from typing import Dict, Any, Tuple, Optional
+import re
 from PIL import Image, ImageDraw, ImageFont
 import torch
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
@@ -21,16 +22,24 @@ DEBUG = True
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-def load_model():
-    """Load the vision-language model"""
+def load_model(use_safe_dtype: bool = False, force_cpu: bool = False):
+    """Load the vision-language model.
+    use_safe_dtype=True forces float32 to avoid potential CUDA asserts.
+    """
     print(f"Loading model: {MODEL_ID}")
     print(f"Device: {DEVICE}")
     
     processor = AutoProcessor.from_pretrained(MODEL_ID, trust_remote_code=True)
+    # Choose dtype based on device and safety flag
+    if (DEVICE == "cuda") and (not use_safe_dtype) and (not force_cpu):
+        dtype = torch.float16
+    else:
+        dtype = torch.float32
+    device_map = "auto" if not force_cpu else {"": "cpu"}
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         MODEL_ID,
-        torch_dtype=torch.float16,
-        device_map="auto",
+        torch_dtype=dtype,
+        device_map=device_map,
         trust_remote_code=True,
     )
     model.eval()
@@ -51,7 +60,7 @@ def simple_localize(processor, model, camera_img: Image.Image, map_img: Image.Im
     """
     map_width, map_height = map_img.size
     
-    # Simple, direct prompt with clearer instructions
+    # Simple, direct prompt with clearer instructions and without numeric examples
     prompt = f"""Analyze the street view image and find where the camera was positioned on the aerial map.
 
 Instructions:
@@ -62,10 +71,10 @@ Instructions:
 Map dimensions: {map_width} x {map_height} pixels
 Valid coordinates: x=0 to {map_width-1}, y=0 to {map_height-1}
 
-Return your answer in this EXACT format:
-{{"x": 123, "y": 456, "confidence": 0.85, "reason": "Intersection at main street"}}
+Return ONLY valid JSON with these keys and types:
+{"x": <integer>, "y": <integer>, "confidence": <float 0..1>, "reason": "<short explanation>"}
 
-Do not include any other text, just the JSON."""
+Output only the JSON object and nothing else."""
 
     chat = [
         {
@@ -108,11 +117,11 @@ Do not include any other text, just the JSON."""
         response = processor.decode(output[0], skip_special_tokens=True)
         print(f"Raw response: {response}")
         
-        # Clean response - remove the input part if present
-        if "user" in response.lower():
-            # Split on user content and take the last part
-            parts = response.split("user", 1)
-            if len(parts) > 1:
+        # Clean response - try to keep only assistant's part
+        lower_resp = response.lower()
+        if "assistant" in lower_resp:
+            parts = re.split(r"assistant\s*:?", response, flags=re.IGNORECASE)
+            if parts:
                 response = parts[-1]
         
         # Extract JSON from response
@@ -121,12 +130,15 @@ Do not include any other text, just the JSON."""
         return result
         
     except Exception as e:
-        print(f"Error during localization: {e}")
+        # Keep reason user-friendly; put detailed error separately
+        error_msg = str(e).split('\n', 1)[0]
+        print(f"Error during localization: {error_msg}")
         return {
             "x": map_width // 2,
             "y": map_height // 2,
             "confidence": 0.0,
-            "reason": f"Error: {str(e)}"
+            "reason": "Inference failed; returned fallback position",
+            "error": error_msg,
         }
 
 def extract_coordinates(text: str, map_width: int, map_height: int) -> Dict[str, Any]:
@@ -146,7 +158,8 @@ def extract_coordinates(text: str, map_width: int, map_height: int) -> Dict[str,
     for pattern in json_patterns:
         matches = re.findall(pattern, text, re.IGNORECASE | re.DOTALL)
         if matches:
-            for match in matches:
+            # Prefer the last JSON-like block, which is likely the model's answer
+            for match in reversed(matches):
                 try:
                     print(f"Trying to parse JSON: {match}")  # Debug output
                     result = json.loads(match)
@@ -273,6 +286,7 @@ def main():
     parser.add_argument("--map", required=True, help="Path to map image")
     parser.add_argument("--max-size", type=int, default=1024, help="Max image size")
     parser.add_argument("--no-viz", action="store_true", help="Skip visualization")
+    parser.add_argument("--safe", action="store_true", help="Use safe dtype (float32) to avoid CUDA asserts")
     
     args = parser.parse_args()
     
@@ -282,7 +296,7 @@ def main():
     
     # Load model
     start_time = time.time()
-    processor, model = load_model()
+    processor, model = load_model(use_safe_dtype=args.safe)
     model_time = time.time() - start_time
     print(f"Model loading time: {model_time:.2f}s")
     
@@ -312,8 +326,9 @@ def main():
         print(f"\nVisualization saved: {viz_path}")
     
     # Output JSON
+    success = "error" not in result
     output = {
-        "success": True,
+        "success": success,
         "position": {"x": result["x"], "y": result["y"]},
         "confidence": result["confidence"],
         "reason": result["reason"],
@@ -323,6 +338,8 @@ def main():
             "total": round(model_time + inference_time, 2)
         }
     }
+    if not success and "error" in result:
+        output["error"] = result["error"]
     
     print(f"\nJSON Output:")
     print(json.dumps(output, indent=2))
