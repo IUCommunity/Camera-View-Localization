@@ -112,7 +112,6 @@ def localize_camera_on_tile(
     model,
     cam_img: Image.Image,
     map_tile: Image.Image,
-    depth_img: Image.Image,
     *,
     samples: int = 3,
     temperature: float = 0.2,
@@ -122,11 +121,9 @@ def localize_camera_on_tile(
 ) -> Dict[str, Any]:
     prompt = (
         "You are a precise spatial localizer.\n"
-        "Task: Given a STREET_VIEW image (ground level), a DEPTH image (depth information), and a MAP_TILE image (aerial view), predict where the camera view lies inside the MAP_TILE.\n"
-        "Use the depth information to better understand the 3D structure and spatial relationships in the street view.\n"
+        "Task: Given a STREET_VIEW image (ground level) and a MAP_TILE image (aerial view), predict where the camera view lies inside the MAP_TILE.\n"
         "Rules:\n"
         "- Use persistent structures: roads, intersections, building footprints, plazas, fences/gates, sidewalks, crosswalks, permanent landmarks.\n"
-        "- Analyze depth information to understand distances and spatial layout.\n"
         "- Ignore weather, lighting, shadows, seasons.\n"
         "Output ONLY valid JSON with fields: {\n"
         "  \"bounding_box\": [x_min, y_min, x_max, y_max],\n"
@@ -149,13 +146,12 @@ def localize_camera_on_tile(
             {"role": "system", "content": "You output JSON only. Do not include explanations."},
             {"role": "user", "content": [
                 {"type": "image"},  # STREET_VIEW
-                {"type": "image"},  # DEPTH
                 {"type": "image"},  # MAP_TILE
                 {"type": "text", "text": prompt},
             ]},
         ]
         chat_str = processor.apply_chat_template(chat, add_generation_prompt=True)
-        inputs = processor(text=chat_str, images=[cam_img, depth_img, map_tile], return_tensors="pt").to(model.device)
+        inputs = processor(text=chat_str, images=[cam_img, map_tile], return_tensors="pt").to(model.device)
 
         gen_kwargs: Dict[str, Any] = {"max_new_tokens": max_new_tokens}
         if samples > 1 or temperature > 0:
@@ -297,7 +293,7 @@ def compute_global_point_from_candidate(candidate: Dict[str, Any]) -> Dict[str, 
 # Main Pipeline
 # -------------------------
 
-def main(camera_path: str, map_path: str, depth_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3, samples: int = 3, temperature: float = 0.2, top_p: float = 0.9, early_termination_threshold: float = 0.85, max_tiles: int = None, fast_mode: bool = False, max_image_size: int = None):
+def main(camera_path: str, map_path: str, *, tile_size: int = 1024, stride: int = 512, json_only: bool = False, no_viz: bool = False, top_k: int = 3, samples: int = 3, temperature: float = 0.2, top_p: float = 0.9, early_termination_threshold: float = 0.85, max_tiles: int = None, fast_mode: bool = False, max_image_size: int = None):
     # Extract camera name from path for result naming
     camera_name = os.path.splitext(os.path.basename(camera_path))[0]
     start_time = time.time()
@@ -312,7 +308,6 @@ def main(camera_path: str, map_path: str, depth_path: str, *, tile_size: int = 1
 
     cam_img = load_image(camera_path, max_image_size)
     map_img = load_image(map_path, max_image_size)
-    depth_img = load_image(depth_path, max_image_size)
 
     if not json_only:
         print("[Step 1] Splitting map into tiles and localizing camera on each tile...")
@@ -341,7 +336,6 @@ def main(camera_path: str, map_path: str, depth_path: str, *, tile_size: int = 1
             model,
             cam_img,
             tile_img,
-            depth_img,
             samples=samples,
             temperature=temperature,
             top_p=top_p,
@@ -457,7 +451,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Camera-to-Map ROI Localization")
     parser.add_argument("--camera", type=str, default="camera.jpg", help="Path to street view image")
     parser.add_argument("--map", dest="map_path", type=str, default="map.jpg", help="Path to map image")
-    parser.add_argument("--depth", type=str, default="depth.jpg", help="Path to depth image")
     parser.add_argument("--tile-size", type=int, default=1024, help="Tile size for map tiling")
     parser.add_argument("--stride", type=int, default=512, help="Stride for map tiling")
     parser.add_argument("--json", dest="json_only", action="store_true", help="Output JSON with global (x,y) only")
@@ -479,7 +472,6 @@ if __name__ == "__main__":
     main(
         args.camera,
         args.map_path,
-        args.depth,
         tile_size=args.tile_size,
         stride=args.stride,
         json_only=args.json_only,
