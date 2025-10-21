@@ -507,8 +507,8 @@ def aggregate_predictions_advanced(predictions: List[Dict[str, Any]], map_width:
 def multi_scale_localization(
     processor,
     model,
-    camera_img: Image.Image,
-    map_img: Image.Image,
+    camera_img: np.ndarray,
+    map_img: np.ndarray,
     *,
     scales: List[float] = [0.75, 1.0, 1.25],
     num_samples_per_scale: int = 2,
@@ -516,7 +516,7 @@ def multi_scale_localization(
 ) -> Dict[str, Any]:
     """Analyze at multiple scales for improved accuracy"""
     
-    map_width, map_height = map_img.size
+    map_height, map_width = map_img.shape[:2]
     scale_results = []
     
     for scale in scales:
@@ -527,7 +527,7 @@ def multi_scale_localization(
         if scale != 1.0:
             new_width = int(map_width * scale)
             new_height = int(map_height * scale)
-            scaled_map = map_img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+            scaled_map = cv2.resize(map_img, (new_width, new_height), interpolation=cv2.INTER_LANCZOS4)
         else:
             scaled_map = map_img
         
