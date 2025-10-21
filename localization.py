@@ -9,7 +9,8 @@ import re
 import argparse
 import time
 from typing import Dict, Any, Tuple, Optional, List
-from PIL import Image, ImageDraw, ImageFont
+import cv2
+import numpy as np
 import torch
 from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 
@@ -54,12 +55,26 @@ def load_model():
 # Image Utilities
 # -------------------------
 
-def load_image(path: str, max_size: int = 2048) -> Image.Image:
+def load_image(path: str, max_size: int = 2048) -> np.ndarray:
     """Load and optionally resize image"""
-    img = Image.open(path).convert("RGB")
-    if max_size and (img.width > max_size or img.height > max_size):
+    img = cv2.imread(path)
+    if img is None:
+        raise ValueError(f"Could not load image from {path}")
+    
+    # Convert BGR to RGB
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    
+    if max_size and (img.shape[1] > max_size or img.shape[0] > max_size):
         # Preserve aspect ratio
-        img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+        h, w = img.shape[:2]
+        if w > h:
+            new_w = max_size
+            new_h = int(h * max_size / w)
+        else:
+            new_h = max_size
+            new_w = int(w * max_size / h)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+    
     return img
 
 # -------------------------
@@ -285,8 +300,8 @@ def calculate_consensus(predictions: List[Dict[str, Any]]) -> float:
 def localize_camera_position(
     processor,
     model,
-    camera_img: Image.Image,
-    map_img: Image.Image,
+    camera_img: np.ndarray,
+    map_img: np.ndarray,
     *,
     num_samples: int = 3,
     temperature: float = 0.1,
@@ -298,7 +313,7 @@ def localize_camera_position(
     Uses multiple samples and advanced aggregation for robustness.
     """
     
-    map_width, map_height = map_img.size
+    map_height, map_width = map_img.shape[:2]
     
     # Optimize parameters based on mode
     if fast_mode:
