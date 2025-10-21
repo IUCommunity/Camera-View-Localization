@@ -824,7 +824,7 @@ def main(
             "mode": mode,
             "num_samples": num_samples,
             "temperature": temperature,
-            "map_size": list(map_img.size),
+            "map_size": list(map_img.shape[:2][::-1]),  # (width, height)
             "fast_mode": fast_mode,
             "high_accuracy": high_accuracy,
             "multi_scale": use_multi_scale,
