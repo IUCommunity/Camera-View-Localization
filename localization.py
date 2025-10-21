@@ -607,7 +607,7 @@ def combine_multi_scale_results(scale_results: List[Dict[str, Any]], map_width: 
 # -------------------------
 
 def visualize_position(
-    map_img: Image.Image,
+    map_img: np.ndarray,
     x: int,
     y: int,
     confidence: float,
@@ -617,80 +617,69 @@ def visualize_position(
     """Draw the predicted camera position on the map"""
     
     img = map_img.copy()
-    draw = ImageDraw.Draw(img, "RGBA")
     
     # Draw confidence radius (larger = less confident)
     radius = int(30 * (1.1 - confidence))  # 3-30 pixels
     
-    # Semi-transparent uncertainty circle
-    uncertainty_color = (255, 255, 0, 100)  # Yellow with alpha
-    draw.ellipse(
-        [x - radius, y - radius, x + radius, y + radius],
-        fill=uncertainty_color,
-        outline=(255, 255, 0, 200),
-        width=2
-    )
+    # Semi-transparent uncertainty circle (yellow with alpha)
+    overlay = img.copy()
+    cv2.circle(overlay, (x, y), radius, (255, 255, 0), -1)
+    cv2.addWeighted(overlay, 0.4, img, 0.6, 0, img)
+    cv2.circle(img, (x, y), radius, (255, 255, 0), 2)
     
     # Main position marker
     marker_size = 12
     # Outer white circle
-    draw.ellipse(
-        [x - marker_size - 2, y - marker_size - 2, 
-         x + marker_size + 2, y + marker_size + 2],
-        fill=(255, 255, 255),
-        outline=(0, 0, 0),
-        width=2
-    )
+    cv2.circle(img, (x, y), marker_size + 2, (255, 255, 255), -1)
+    cv2.circle(img, (x, y), marker_size + 2, (0, 0, 0), 2)
     # Inner red circle
-    draw.ellipse(
-        [x - marker_size, y - marker_size, x + marker_size, y + marker_size],
-        fill=(255, 0, 0),
-        outline=(255, 255, 255),
-        width=2
-    )
+    cv2.circle(img, (x, y), marker_size, (255, 0, 0), -1)
+    cv2.circle(img, (x, y), marker_size, (255, 255, 255), 2)
     
     # Crosshair for precision
     line_len = 25
-    draw.line([x - line_len, y, x + line_len, y], fill=(255, 255, 255), width=3)
-    draw.line([x, y - line_len, x, y + line_len], fill=(255, 255, 255), width=3)
-    draw.line([x - line_len, y, x + line_len, y], fill=(255, 0, 0), width=1)
-    draw.line([x, y - line_len, x, y + line_len], fill=(255, 0, 0), width=1)
+    cv2.line(img, (x - line_len, y), (x + line_len, y), (255, 255, 255), 3)
+    cv2.line(img, (x, y - line_len), (x, y + line_len), (255, 255, 255), 3)
+    cv2.line(img, (x - line_len, y), (x + line_len, y), (255, 0, 0), 1)
+    cv2.line(img, (x, y - line_len), (x, y + line_len), (255, 0, 0), 1)
     
     # Add label
-    try:
-        font = ImageFont.load_default()
-    except:
-        font = None
+    label = f"Camera: ({x}, {y})"
+    label2 = f"Confidence: {confidence:.2%}"
     
-    label = f"Camera: ({x}, {y})\nConfidence: {confidence:.2%}"
-    label_x = max(10, min(x + 30, map_img.width - 250))
-    label_y = max(10, min(y - 50, map_img.height - 100))
+    # Calculate text position
+    map_height, map_width = img.shape[:2]
+    label_x = max(10, min(x + 30, map_width - 250))
+    label_y = max(10, min(y - 50, map_height - 100))
     
-    # Draw text with background
-    if font:
-        try:
-            bbox = draw.textbbox((label_x, label_y), label, font=font)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        except AttributeError:
-            tw, th = draw.textsize(label, font=font)
-    else:
-        try:
-            bbox = draw.textbbox((label_x, label_y), label)
-            tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
-        except AttributeError:
-            tw, th = 100, 40
+    # Get text size
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.6
+    thickness = 2
+    
+    (text_width1, text_height1), _ = cv2.getTextSize(label, font, font_scale, thickness)
+    (text_width2, text_height2), _ = cv2.getTextSize(label2, font, font_scale, thickness)
+    
+    text_width = max(text_width1, text_width2)
+    text_height = text_height1 + text_height2 + 10
     
     # Background rectangle
-    draw.rectangle(
-        [label_x - 5, label_y - 5, label_x + tw + 10, label_y + th + 10],
-        fill=(0, 0, 0, 200),
-        outline=(255, 255, 255)
-    )
-    draw.text((label_x, label_y), label, fill=(255, 255, 255), font=font)
+    cv2.rectangle(img, 
+                  (label_x - 5, label_y - text_height - 5), 
+                  (label_x + text_width + 10, label_y + 5), 
+                  (0, 0, 0), -1)
+    cv2.rectangle(img, 
+                  (label_x - 5, label_y - text_height - 5), 
+                  (label_x + text_width + 10, label_y + 5), 
+                  (255, 255, 255), 2)
+    
+    # Draw text
+    cv2.putText(img, label, (label_x, label_y - 5), font, font_scale, (255, 255, 255), thickness)
+    cv2.putText(img, label2, (label_x, label_y + text_height1 + 5), font, font_scale, (255, 255, 255), thickness)
     
     # Save
     save_path = os.path.join(OUTPUT_DIR, f"localization-{camera_name}.png")
-    img.save(save_path)
+    cv2.imwrite(save_path, cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
     return save_path
 
 # -------------------------
@@ -753,8 +742,8 @@ def main(
     camera_img = load_image(camera_path, max_image_size)
     map_img = load_image(map_path, max_image_size)
     if not json_only:
-        print(f"  ✓ Camera: {camera_img.size}")
-        print(f"  ✓ Map: {map_img.size}")
+        print(f"  ✓ Camera: {camera_img.shape[:2][::-1]}")  # (width, height)
+        print(f"  ✓ Map: {map_img.shape[:2][::-1]}")  # (width, height)
     
     # Perform localization
     if not json_only:
