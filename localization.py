@@ -55,14 +55,18 @@ def load_model():
 # Image Utilities
 # -------------------------
 
-def load_image(path: str, max_size: int = 2048) -> np.ndarray:
-    """Load and optionally resize image"""
+def load_image(path: str, max_size: int = 2048) -> Tuple[np.ndarray, float]:
+    """Load and optionally resize image, returns (image, scale_factor)"""
     img = cv2.imread(path)
     if img is None:
         raise ValueError(f"Could not load image from {path}")
     
     # Convert BGR to RGB
     img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    
+    # Store original dimensions
+    original_h, original_w = img.shape[:2]
+    scale_factor = 1.0
     
     if max_size and (img.shape[1] > max_size or img.shape[0] > max_size):
         # Preserve aspect ratio
@@ -74,8 +78,11 @@ def load_image(path: str, max_size: int = 2048) -> np.ndarray:
             new_h = max_size
             new_w = int(w * max_size / h)
         img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_LANCZOS4)
+        
+        # Calculate scale factor (how much the image was scaled down)
+        scale_factor = original_w / new_w  # Same factor for both dimensions due to aspect ratio preservation
     
-    return img
+    return img, scale_factor
 
 # -------------------------
 # JSON Extraction Helper
@@ -739,11 +746,11 @@ def main(
     # Load images
     if not json_only:
         print("\n[2/4] Loading images...")
-    camera_img = load_image(camera_path, max_image_size)
-    map_img = load_image(map_path, max_image_size)
+    camera_img, camera_scale = load_image(camera_path, max_image_size)
+    map_img, map_scale = load_image(map_path, max_image_size)
     if not json_only:
-        print(f"  ✓ Camera: {camera_img.shape[:2][::-1]}")  # (width, height)
-        print(f"  ✓ Map: {map_img.shape[:2][::-1]}")  # (width, height)
+        print(f"  ✓ Camera: {camera_img.shape[:2][::-1]} (scale: {camera_scale:.2f})")  # (width, height)
+        print(f"  ✓ Map: {map_img.shape[:2][::-1]} (scale: {map_scale:.2f})")  # (width, height)
     
     # Perform localization
     if not json_only:
@@ -775,8 +782,13 @@ def main(
     
     inference_time = time.time() - inference_start
     
+    # Scale coordinates back to original image size
+    original_x = int(result['x'] * map_scale)
+    original_y = int(result['y'] * map_scale)
+    
     if not json_only:
-        print(f"  ✓ Position: ({result['x']}, {result['y']})")
+        print(f"  ✓ Position (resized): ({result['x']}, {result['y']})")
+        print(f"  ✓ Position (original): ({original_x}, {original_y})")
         print(f"  ✓ Confidence: {result['confidence']:.2%}")
         print(f"  ✓ Reasoning: {result['reasoning']}")
         if 'consensus_score' in result:
@@ -785,15 +797,19 @@ def main(
             print(f"  ✓ Scales analyzed: {result['num_scales']}")
         print(f"  ✓ Inference time: {inference_time:.2f}s")
     
+    # Load original map image for visualization and output
+    original_map_img, _ = load_image(map_path, max_size=None)  # No resizing for visualization
+    
     # Visualize
     viz_path = None
     if not no_viz:
         if not json_only:
             print("\n[4/4] Generating visualization...")
+        
         viz_path = visualize_position(
-            map_img,
-            result["x"],
-            result["y"],
+            original_map_img,
+            original_x,
+            original_y,
             result["confidence"],
             camera_name,
             result["reasoning"],
@@ -807,7 +823,11 @@ def main(
     output = {
         "success": True,
         "position": {
-            "x": result["x"],
+            "x": original_x,  # Use original coordinates
+            "y": original_y
+        },
+        "position_resized": {
+            "x": result["x"],  # Keep resized coordinates for reference
             "y": result["y"]
         },
         "confidence": result["confidence"],
@@ -824,7 +844,9 @@ def main(
             "mode": mode,
             "num_samples": num_samples,
             "temperature": temperature,
-            "map_size": list(map_img.shape[:2][::-1]),  # (width, height)
+            "map_size_original": list(original_map_img.shape[:2][::-1]),  # Original size
+            "map_size_processed": list(map_img.shape[:2][::-1]),  # Processed size
+            "map_scale_factor": map_scale,
             "fast_mode": fast_mode,
             "high_accuracy": high_accuracy,
             "multi_scale": use_multi_scale,
