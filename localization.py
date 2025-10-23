@@ -17,7 +17,9 @@ from transformers import AutoProcessor, Qwen2_5_VLForConditionalGeneration
 # -------------------------
 # Configuration
 # -------------------------
-MODEL_ID = "miniHui/Geo-R1"
+# Qwen/Qwen2.5-VL-7B-Instruct
+# miniHui/Geo-R1
+MODEL_ID = "Qwen/Qwen2.5-VL-7B-Instruct"
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 OUTPUT_DIR = "results"
 DEBUG = True
